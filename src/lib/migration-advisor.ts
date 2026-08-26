@@ -93,12 +93,12 @@ export function findMigrationAlternatives(
 
   for (const b of benchmarkCandidates) {
     const snap = candidateSnapshots.find((s) => s.model_id.toLowerCase() === b.model_id.toLowerCase());
-    const prompt1m = snap?.price_prompt !== null && snap?.price_prompt !== undefined
+    const prompt1m = (snap?.price_prompt !== null && snap?.price_prompt !== undefined
       ? snap.price_prompt * 1_000_000
-      : b.pricing_prompt_1m;
-    const comp1m = snap?.price_completion !== null && snap?.price_completion !== undefined
+      : b.pricing_prompt_1m) ?? 0;
+    const comp1m = (snap?.price_completion !== null && snap?.price_completion !== undefined
       ? snap.price_completion * 1_000_000
-      : b.pricing_comp_1m;
+      : b.pricing_comp_1m) ?? 0;
 
     const blended = (prompt1m * 0.5) + (comp1m * 0.5);
     const savingsPct = targetBlended > 0 ? Math.round(((targetBlended - blended) / targetBlended) * 100) : 0;
@@ -133,8 +133,8 @@ export function findMigrationAlternatives(
         humaneval: b.humaneval,
         math_500: b.math_500,
         delta_elo: eloDelta,
-        source_name: b.source_name,
-        source_url: b.source_url,
+        source_name: b.source_name || 'Verified Evaluations',
+        source_url: b.source_url || 'https://lmsys.org',
       },
       is_same_provider: isSameProvider,
       is_direct_drop_in: isSameProvider || b.model_id.includes('openai') || b.model_id.includes('deepseek'),

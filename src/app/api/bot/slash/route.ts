@@ -138,7 +138,9 @@ export async function POST(request: NextRequest) {
         );
 
         if (benchmark) {
-          markdownResponse = `🏷️ **${benchmark.name}** (\`${benchmark.model_id}\`)\n• Provider: **${benchmark.provider}**\n• Input Prompt: \`$${benchmark.pricing_prompt_1m.toFixed(2)} / 1M tokens\`\n• Output Completion: \`$${benchmark.pricing_comp_1m.toFixed(2)} / 1M tokens\`\n• Arena Elo: \`${benchmark.arena_elo}\` (Source: ${benchmark.source_name})`;
+          const pPrompt = benchmark.pricing_prompt_1m !== undefined ? `$${benchmark.pricing_prompt_1m.toFixed(2)} / 1M tokens` : 'N/A';
+          const pComp = benchmark.pricing_comp_1m !== undefined ? `$${benchmark.pricing_comp_1m.toFixed(2)} / 1M tokens` : 'N/A';
+          markdownResponse = `🏷️ **${benchmark.name}** (\`${benchmark.model_id}\`)\n• Provider: **${benchmark.provider}**\n• Input Prompt: \`${pPrompt}\`\n• Output Completion: \`${pComp}\`\n• Arena Elo: \`${benchmark.arena_elo || 'N/A'}\` (Source: ${benchmark.source_name || 'Verified'})`;
           break;
         }
 

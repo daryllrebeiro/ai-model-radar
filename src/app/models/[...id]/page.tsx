@@ -8,6 +8,7 @@ import { EventCard } from '@/components/feed/event-card';
 import { CompareButton } from '@/components/compare/compare-button';
 import { WatchButton } from '@/components/watchlist/watch-button';
 import { MigrationAlternativesCard } from '@/components/models/migration-alternatives-card';
+import { BadgeEmbedCard } from '@/components/models/badge-embed-card';
 import { findMigrationAlternatives } from '@/lib/migration-advisor';
 import { ArrowLeft, Cpu, Activity, History, LineChart, Sparkles } from 'lucide-react';
 
@@ -104,7 +105,12 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
         <PriceChart snapshots={snapshots} />
       </section>
 
-      {/* 4. Full Event Changelog for this Model */}
+      {/* 4. Embed Live Price Badge */}
+      <section>
+        <BadgeEmbedCard modelId={current.model_id} modelName={current.name} />
+      </section>
+
+      {/* 5. Full Event Changelog for this Model */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">

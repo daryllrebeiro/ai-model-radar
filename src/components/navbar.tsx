@@ -15,6 +15,7 @@ import {
   Users,
   Bell,
   Code2,
+  Calendar,
   Rss,
   Star,
   Search,
@@ -41,6 +42,7 @@ export function Navbar() {
   const mainNavItems = [
     { name: 'Feed', href: '/', icon: Activity },
     { name: 'Compare', href: '/compare', icon: Scale },
+    { name: 'Changelog', href: '/changelog', icon: Calendar },
     { name: 'Deals', href: '/deals', icon: Tag },
     { name: 'Arbitrage', href: '/arbitrage', icon: Scale },
     { name: 'Benchmarks', href: '/benchmarks', icon: Award },
