@@ -2,6 +2,10 @@
   "name": "ai-model-radar",
   "version": "1.0.0",
   "private": true,
+  "bin": {
+    "ai-model-radar": "./bin/radar.js",
+    "radar": "./bin/radar.js"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
