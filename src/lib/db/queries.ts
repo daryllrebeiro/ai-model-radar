@@ -1152,6 +1152,15 @@ export async function getUserWatchlist(userId: number): Promise<string[]> {
 }
 
 /**
+ * Retrieves watchlist items for a given user by email address
+ */
+export async function getUserWatchlistByEmail(email: string): Promise<string[]> {
+  const user = await getUserByEmail(email);
+  if (!user || !user.id) return [];
+  return getUserWatchlist(user.id);
+}
+
+/**
  * Pins a model to user watchlist
  */
 export async function addToWatchlist(userId: number, modelId: string): Promise<boolean> {

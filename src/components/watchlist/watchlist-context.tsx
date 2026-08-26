@@ -1,18 +1,23 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { trackEvent } from '@/lib/analytics';
 
 interface WatchlistContextType {
   watchedIds: Set<string>;
+  watchedList: string[];
   isWatched: (modelId: string) => boolean;
   toggleWatch: (modelId: string) => void;
+  addMultipleToWatchlist: (ids: string[]) => void;
   watchlistCount: number;
 }
 
 const WatchlistContext = createContext<WatchlistContextType>({
   watchedIds: new Set(),
+  watchedList: [],
   isWatched: () => false,
   toggleWatch: () => {},
+  addMultipleToWatchlist: () => {},
   watchlistCount: 0,
 });
 
@@ -37,19 +42,37 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
     setMounted(true);
   }, []);
 
+  const persistWatchlist = (ids: Set<string>) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(ids)));
+    } catch (e) {
+      console.error('Failed to save watchlist:', e);
+    }
+  };
+
   const toggleWatch = (modelId: string) => {
     setWatchedIds((prev) => {
       const next = new Set(prev);
       if (next.has(modelId)) {
         next.delete(modelId);
+        trackEvent('watchlist_remove', { modelId });
       } else {
         next.add(modelId);
+        trackEvent('watchlist_add', { modelId });
       }
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(next)));
-      } catch (e) {
-        console.error('Failed to save watchlist:', e);
+      persistWatchlist(next);
+      return next;
+    });
+  };
+
+  const addMultipleToWatchlist = (ids: string[]) => {
+    setWatchedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        next.add(id);
       }
+      persistWatchlist(next);
+      trackEvent('watchlist_add_batch', { count: ids.length });
       return next;
     });
   };
@@ -62,8 +85,10 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
     <WatchlistContext.Provider
       value={{
         watchedIds,
+        watchedList: mounted ? Array.from(watchedIds) : [],
         isWatched,
         toggleWatch,
+        addMultipleToWatchlist,
         watchlistCount: watchedIds.size,
       }}
     >

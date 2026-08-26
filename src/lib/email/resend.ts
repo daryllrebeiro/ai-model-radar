@@ -29,16 +29,18 @@ export interface DigestContentOptions {
   recipientEmail: string;
   recentEvents: ModelEvent[];
   timeframe: 'daily' | 'weekly';
+  watchlistModelIds?: string[];
   baseUrl?: string;
 }
 
 /**
- * Renders a responsive HTML email digest
+ * Renders a responsive HTML email digest with prioritized stack updates
  */
 export function renderDigestHtml({
   recipientEmail,
   recentEvents,
   timeframe,
+  watchlistModelIds = [],
   baseUrl = 'https://ai-model-radar.com',
 }: DigestContentOptions): string {
   const token = generateUnsubscribeToken(recipientEmail);
@@ -46,13 +48,15 @@ export function renderDigestHtml({
     recipientEmail
   )}&token=${token}`;
 
+  const hasWatchlist = Array.isArray(watchlistModelIds) && watchlistModelIds.length > 0;
+  const stackEvents = hasWatchlist
+    ? recentEvents.filter((e) => watchlistModelIds.includes(e.model_id))
+    : [];
+
   const priceDrops = recentEvents.filter(
     (e) => (e.event_type === 'PRICE_CHANGE' && (e.pct_change || 0) < 0) || e.event_type === 'BECAME_FREE'
   );
   const newReleases = recentEvents.filter((e) => e.event_type === 'NEW_MODEL');
-  const otherEvents = recentEvents.filter(
-    (e) => e.event_type !== 'PRICE_CHANGE' && e.event_type !== 'NEW_MODEL' && e.event_type !== 'BECAME_FREE'
-  );
 
   return `
 <!DOCTYPE html>
@@ -84,6 +88,40 @@ export function renderDigestHtml({
       <div class="title">⚡ AI Model Radar</div>
       <div class="subtitle">${timeframe === 'daily' ? 'Daily Market Intelligence' : 'Weekly Intelligence Summary'} &bull; ${new Date().toLocaleDateString()}</div>
     </div>
+
+    ${
+      stackEvents.length > 0
+        ? `
+    <div class="section" style="background-color: #0C1A30; border-left: 4px solid #38BDF8;">
+      <div class="section-title" style="color: #38BDF8;">⚡ Updates To Your Stack (${stackEvents.length})</div>
+      ${stackEvents
+        .slice(0, 8)
+        .map(
+          (e) => `
+        <div class="event-card" style="background-color: #16243E; border-color: #1E3A8A;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="model-name" style="color: #60A5FA;">${e.model_name || e.model_id}</div>
+            <span style="font-size: 10px; font-family: monospace; background-color: #1E3A8A; color: #93C5FD; padding: 2px 6px; border-radius: 4px;">WATCHLIST</span>
+          </div>
+          <div style="font-size: 12px; color: #93C5FD; margin-top: 4px;">
+            ${
+              e.event_type === 'PRICE_CHANGE'
+                ? e.pct_change && e.pct_change < 0
+                  ? `${Math.abs(Math.round(e.pct_change))}% price cut`
+                  : `Price updated (${e.pct_change ? `${e.pct_change > 0 ? '+' : ''}${e.pct_change}%` : 'modified'})`
+                : e.event_type === 'BECAME_FREE'
+                ? 'Model is now 100% FREE'
+                : e.event_type === 'CONTEXT_CHANGED'
+                ? 'Context window updated'
+                : 'Market update detected'
+            } &bull; Provider: ${e.provider || 'AI Hub'}
+          </div>
+        </div>`
+        )
+        .join('')}
+    </div>`
+        : ''
+    }
 
     ${
       priceDrops.length > 0

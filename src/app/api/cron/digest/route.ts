@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRecentEvents, getActiveAlertRules } from '@/lib/db/queries';
+import { getRecentEvents, getActiveAlertRules, getUserWatchlistByEmail } from '@/lib/db/queries';
 import { renderDigestHtml, sendEmailDigest } from '@/lib/email/resend';
 import { logger } from '@/lib/logger';
 
@@ -39,10 +39,13 @@ async function handleDigest(request: NextRequest) {
     let deliveredCount = 0;
 
     for (const email of uniqueEmails) {
+      const userWatchlist = await getUserWatchlistByEmail(email);
+
       const html = renderDigestHtml({
         recipientEmail: email,
         recentEvents,
         timeframe,
+        watchlistModelIds: userWatchlist,
       });
 
       const result = await sendEmailDigest({
