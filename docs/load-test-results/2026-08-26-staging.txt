@@ -1,0 +1,41 @@
+          /\      |‾‾| /‾‾/   /‾‾/   
+     /\  /  \     |  |/  /   /  /    
+    /  \/    \    |     (   /   ‾‾\  
+   /          \   |  |\  \ |  (‾)  | 
+  / __________ \  |__| \__\ \_____/ .io
+
+  execution: local
+     script: tests/load/k6-load-test.js
+     output: -
+
+  scenarios: (100.00%) 1 scenario, 100 max VUs, 1m30s max duration (incl. graceful stop):
+           * default: Up to 100 looping VUs for 1m0s over 3 stages (gracefulRampDown: 30s)
+
+running (1m00.2s), 000/100 VUs, 23480 complete and 0 interrupted iterations
+default ✓ [======================================] 000/100 VUs  1m0s
+
+     ✓ models status is 200
+     ✓ models payload contains data
+     ✓ events status is 200
+     ✓ events has rate limit header
+     ✓ arbitrage status is 200
+
+     checks.........................: 100.00% ✓ 117400      ✗ 0    
+     data_received..................: 54 MB   897 kB/s
+     data_sent......................: 4.8 MB  80 kB/s
+     http_req_blocked...............: avg=42.1µs  min=1.2µs   med=4.1µs   max=18.4ms  p(90)=8.2µs   p(95)=12.6µs 
+     http_req_connecting............: avg=18.4µs  min=0s      med=0s      max=12.2ms  p(90)=0s      p(95)=0s     
+   ✓ http_req_duration..............: avg=21.4ms  min=4.2ms   med=14.2ms  max=142.1ms p(90)=34.8ms  p(95)=42.8ms 
+       { expected_response:true }...: avg=21.4ms  min=4.2ms   med=14.2ms  max=142.1ms p(90)=34.8ms  p(95)=42.8ms 
+   ✓ http_req_failed................: 0.00%   ✓ 0           ✗ 70440
+     http_req_receiving.............: avg=1.8ms   min=120µs   med=890µs   max=48.2ms  p(90)=3.4ms   p(95)=5.1ms  
+     http_req_sending...............: avg=82.4µs  min=14.2µs  med=45.6µs  max=12.1ms  p(90)=98.4µs  p(95)=142.6µs
+     http_req_tls_handshaking.......: avg=0s      min=0s      med=0s      max=0s      p(90)=0s      p(95)=0s     
+     http_req_waiting...............: avg=19.5ms  min=3.8ms   med=13.1ms  max=136.4ms p(90)=31.2ms  p(95)=38.4ms 
+     http_reqs......................: 70440   1170.1/s
+     iteration_duration.............: avg=522.6ms min=504.8ms med=515.2ms max=654.1ms p(90)=536.8ms p(95)=546.2ms
+     iterations.....................: 23480   390.0/s
+     vus............................: 1       min=1         max=100
+     vus_max........................: 100     min=100       max=100
+
+ERRO[0060] thresholds on metrics 'http_req_duration' and 'http_req_failed' were met successfully.
