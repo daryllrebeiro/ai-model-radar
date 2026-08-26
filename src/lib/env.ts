@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { logger } from './logger';
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -6,9 +7,22 @@ export const envSchema = z.object({
   CRON_SECRET: z.string().min(8).optional(),
   ADMIN_SECRET: z.string().min(8).optional(),
   GITHUB_TOKEN: z.string().optional(),
+  GITHUB_POLL_INTERVAL_MINUTES: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : 60)),
   UPSTASH_REDIS_REST_URL: z.string().url().optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
   HEARTBEAT_URL: z.string().url().optional(),
+  STRIPE_ENABLED: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_PRICE_DEVELOPER: z.string().optional(),
+  STRIPE_PRICE_PRODUCTION: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
   PRUNE_DAYS: z
     .string()
     .optional()
@@ -16,6 +30,8 @@ export const envSchema = z.object({
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
+
+let hasWarnedGithubToken = false;
 
 /**
  * Validates and parses application environment variables
@@ -38,8 +54,42 @@ export function validateEnv(processEnv: Record<string, any> = process.env): {
     };
   }
 
+  const env = result.data;
+  const errors: string[] = [];
+
+  // Conditional validation when Stripe billing is enabled
+  if (processEnv.STRIPE_ENABLED === 'true') {
+    if (!processEnv.STRIPE_SECRET_KEY) {
+      errors.push('STRIPE_SECRET_KEY is required when STRIPE_ENABLED=true');
+    }
+    if (!processEnv.STRIPE_WEBHOOK_SECRET) {
+      errors.push('STRIPE_WEBHOOK_SECRET is required when STRIPE_ENABLED=true');
+    }
+  } else {
+    // If billing is disabled, log debug note if Stripe keys exist
+    if (processEnv.STRIPE_SECRET_KEY && processEnv.NODE_ENV !== 'production') {
+      logger.debug('[Billing] STRIPE_SECRET_KEY is present but billing is disabled (STRIPE_ENABLED!=true).');
+    }
+  }
+
+  // GitHub token advisory warning if unset
+  if (!processEnv.GITHUB_TOKEN && !hasWarnedGithubToken && processEnv.NODE_ENV !== 'test') {
+    hasWarnedGithubToken = true;
+    logger.warn(
+      '[github-labs] No GITHUB_TOKEN configured. Running unauthenticated (60 req/hr, shared across your hosting provider\'s egress IPs). This is fine at low polling volume but can cause intermittent rate-limit failures outside your control. Recommended: set GITHUB_TOKEN for 5,000 req/hr and a dedicated quota. See docs/GITHUB_INGESTION.md.'
+    );
+  }
+
+  if (errors.length > 0) {
+    return {
+      valid: false,
+      env,
+      errors,
+    };
+  }
+
   return {
     valid: true,
-    env: result.data,
+    env,
   };
 }

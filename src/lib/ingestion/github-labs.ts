@@ -17,6 +17,39 @@ const TARGET_REPOS: TargetRepo[] = [
 ];
 
 /**
+ * In-memory telemetry cache for GitHub rate limit diagnostics
+ */
+export interface GitHubRateLimitStatus {
+  rateLimitRemaining?: number;
+  rateLimitTotal?: number;
+  lastCheckedAt?: string;
+  isAuthenticated: boolean;
+}
+
+let lastRateLimitStatus: GitHubRateLimitStatus = {
+  isAuthenticated: false,
+};
+
+export function getGitHubRateLimitStatus(): GitHubRateLimitStatus {
+  return {
+    ...lastRateLimitStatus,
+    isAuthenticated: !!process.env.GITHUB_TOKEN,
+  };
+}
+
+/**
+ * Returns configured polling interval in minutes (default: 60)
+ */
+export function getGitHubPollIntervalMinutes(): number {
+  const envVal = process.env.GITHUB_POLL_INTERVAL_MINUTES;
+  if (envVal) {
+    const parsed = parseInt(envVal, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 60;
+}
+
+/**
  * Fetches live activity (releases and latest commits) from GitHub public REST API
  * Authenticated via GITHUB_TOKEN when provided. No synthetic fallback timestamps.
  */
@@ -44,13 +77,27 @@ export async function fetchLabActivity(): Promise<LabActivityItem[]> {
         cache: 'no-store',
       });
 
+      // Capture rate limit headers
+      const remainingHeader = res.headers.get('x-ratelimit-remaining');
+      const limitHeader = res.headers.get('x-ratelimit-limit');
+      if (remainingHeader) {
+        lastRateLimitStatus = {
+          rateLimitRemaining: parseInt(remainingHeader, 10),
+          rateLimitTotal: limitHeader ? parseInt(limitHeader, 10) : undefined,
+          lastCheckedAt: new Date().toISOString(),
+          isAuthenticated: !!githubToken,
+        };
+      }
+
       if (!res.ok) {
         failedRepos++;
         const errorText = await res.text().catch(() => res.statusText);
-        lastError = `GitHub API ${res.status} on ${target.org}/${target.repo}: ${errorText}`;
+        const retryAfter = res.headers.get('retry-after');
+        lastError = `GitHub API ${res.status} on ${target.org}/${target.repo} (remaining: ${remainingHeader ?? 'unknown'}${retryAfter ? `, retry-after: ${retryAfter}` : ''}): ${errorText}`;
         logger.warn(`GitHub API request failed for ${target.org}/${target.repo}:`, {
           status: res.status,
-          rateLimitRemaining: res.headers.get('x-ratelimit-remaining'),
+          rateLimitRemaining: remainingHeader,
+          retryAfter,
         });
         continue;
       }
@@ -97,8 +144,7 @@ export async function fetchLabActivity(): Promise<LabActivityItem[]> {
     error_detail: lastError,
   }).catch(() => {});
 
-  // Return strictly verified live activities sorted newest first.
-  // NO synthetic fallback records are ever returned.
+  // Return strictly verified live activities sorted newest first
   return activities.sort(
     (a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime()
   );

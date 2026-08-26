@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getLatestIngestionRuns, getMarketStats } from '../../../../lib/db/queries';
 import { isPostgres } from '../../../../lib/db/client';
+import { getGitHubRateLimitStatus, getGitHubPollIntervalMinutes } from '../../../../lib/ingestion/github-labs';
+import { isBillingEnabled } from '../../../../lib/feature-flags';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +30,8 @@ export async function GET(request: NextRequest) {
   try {
     const runs = await getLatestIngestionRuns(20);
     const stats = await getMarketStats();
+    const githubRateLimit = getGitHubRateLimitStatus();
+    const githubPollInterval = getGitHubPollIntervalMinutes();
 
     // Group latest run by source
     const sources = ['openrouter', 'github', 'huggingface'] as const;
@@ -44,11 +48,21 @@ export async function GET(request: NextRequest) {
       };
     }
 
+    // Add extra telemetry to github source
+    sourceStatus.github = {
+      ...sourceStatus.github,
+      pollIntervalMinutes: githubPollInterval,
+      rateLimit: githubRateLimit,
+    };
+
     const isHealthy = !runs.slice(0, 3).some((r) => r.status === 'failed');
 
     return NextResponse.json({
       status: isHealthy ? 'healthy' : 'degraded',
       timestamp: new Date().toISOString(),
+      billing: {
+        enabled: isBillingEnabled(),
+      },
       database: {
         engine: isPostgres() ? 'PostgreSQL' : 'Local Storage Engine',
         totalActiveModels: stats.totalActiveModels,
@@ -59,11 +73,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     return NextResponse.json(
-      {
-        status: 'unhealthy',
-        error: error.message || String(error),
-        timestamp: new Date().toISOString(),
-      },
+      { error: error.message || 'Internal health check failure' },
       { status: 500 }
     );
   }
