@@ -1,13 +1,15 @@
 import React from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getModelDetail } from '@/lib/db/queries';
+import { getModelDetail, getModelCurrentList } from '@/lib/db/queries';
 import { PriceChart } from '@/components/models/price-chart';
 import { ModelSpecs } from '@/components/models/model-specs';
 import { EventCard } from '@/components/feed/event-card';
 import { CompareButton } from '@/components/compare/compare-button';
 import { WatchButton } from '@/components/watchlist/watch-button';
-import { ArrowLeft, Cpu, Activity, History, LineChart } from 'lucide-react';
+import { MigrationAlternativesCard } from '@/components/models/migration-alternatives-card';
+import { findMigrationAlternatives } from '@/lib/migration-advisor';
+import { ArrowLeft, Cpu, Activity, History, LineChart, Sparkles } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +30,8 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
   }
 
   const { current, snapshots, events } = data;
+  const { models: allModels } = await getModelCurrentList({ limit: 100 });
+  const migrationReport = findMigrationAlternatives(modelId, allModels);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -79,7 +83,14 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
         <ModelSpecs model={current} />
       </section>
 
-      {/* 2. Interactive Price History Chart */}
+      {/* 2. Migration & Alternatives Recommendations */}
+      {migrationReport && migrationReport.alternatives.length > 0 && (
+        <section className="space-y-3">
+          <MigrationAlternativesCard report={migrationReport} />
+        </section>
+      )}
+
+      {/* 3. Interactive Price History Chart */}
       <section className="p-5 sm:p-6 rounded-2xl border border-gray-800 bg-[#111827]/70 backdrop-blur-sm space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
@@ -93,7 +104,7 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
         <PriceChart snapshots={snapshots} />
       </section>
 
-      {/* 3. Full Event Changelog for this Model */}
+      {/* 4. Full Event Changelog for this Model */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
