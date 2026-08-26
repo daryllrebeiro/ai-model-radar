@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { findApiKeyByHash, updateApiKeyLastUsed } from './db/queries';
+import { isBillingEnabled } from './feature-flags';
 
 export type ApiKeyTier = 'free' | 'developer' | 'production';
 
@@ -49,6 +50,18 @@ export function generateApiKey(
   };
 
   return { plaintextKey, keyRecord };
+}
+
+/**
+ * Public key issuance entry point:
+ * When billing is disabled, user-issued keys are strictly created at 'free' tier regardless of client input.
+ */
+export function issueApiKey(
+  ownerEmail: string,
+  requestedTier: ApiKeyTier = 'free'
+): { plaintextKey: string; keyRecord: ApiKeyRecord } {
+  const effectiveTier: ApiKeyTier = isBillingEnabled() ? requestedTier : 'free';
+  return generateApiKey(ownerEmail, effectiveTier);
 }
 
 /**
