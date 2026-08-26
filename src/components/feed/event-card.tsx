@@ -23,6 +23,7 @@ import {
   Cpu,
 } from 'lucide-react';
 import { WatchButton } from '../watchlist/watch-button';
+import { CompareButton } from '../compare/compare-button';
 
 interface EventCardProps {
   event: ModelEvent;
@@ -107,7 +108,7 @@ export function EventCard({ event }: EventCardProps) {
               {summary.title}
             </h3>
 
-            {/* Model ID Sub-row with copy button & watch button */}
+            {/* Model ID Sub-row with copy button */}
             <div className="flex items-center gap-2 mt-1">
               <span className="text-xs font-mono text-gray-400 truncate">
                 {event.model_id}
@@ -132,9 +133,10 @@ export function EventCard({ event }: EventCardProps) {
           </div>
         </div>
 
-        {/* Right: Timestamp & Action Link & Watch Button */}
+        {/* Right: Timestamp & Action Link & Watch/Compare Buttons */}
         <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 self-end sm:self-start pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-800 w-full sm:w-auto">
           <div className="flex items-center gap-2">
+            <CompareButton modelId={event.model_id} variant="icon" />
             <WatchButton modelId={event.model_id} />
             <span
               className="text-xs font-mono text-gray-400 block cursor-help"

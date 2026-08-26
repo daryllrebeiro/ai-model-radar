@@ -3,6 +3,8 @@ import './globals.css';
 import Link from 'next/link';
 import { Navbar } from '@/components/navbar';
 import { WatchlistProvider } from '@/components/watchlist/watchlist-context';
+import { CompareProvider } from '@/components/compare/compare-context';
+import { FloatingCompareBar } from '@/components/compare/floating-compare-bar';
 import { validateEnv } from '@/lib/env';
 
 // Enforce environment validation on server boot
@@ -56,20 +58,24 @@ export default function RootLayout({
       </head>
       <body className="bg-[#0B0F17] text-gray-100 min-h-screen flex flex-col antialiased selection:bg-cyan-500 selection:text-black">
         <WatchlistProvider>
-          <div className="fixed inset-0 radar-grid-bg pointer-events-none z-0" />
-          <Navbar />
-          <main className="flex-1 relative z-10">{children}</main>
-          <footer className="relative z-10 border-t border-gray-800/80 bg-[#0B0F17]/95 py-6 mt-12 text-xs text-gray-400 font-mono">
-            <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <p>AI Model Radar &copy; {new Date().getFullYear()} — Powered by OpenRouter, GitHub &amp; Hugging Face.</p>
-              <div className="flex items-center gap-4">
-                <Link href="/privacy" className="hover:text-cyan-400 transition-colors">Privacy Policy</Link>
-                <Link href="/terms" className="hover:text-cyan-400 transition-colors">Terms of Service</Link>
-                <Link href="/contact" className="hover:text-cyan-400 transition-colors">Support &amp; Security</Link>
-                <Link href="/feed.xml" className="hover:text-amber-400 transition-colors">RSS Feed</Link>
+          <CompareProvider>
+            <div className="fixed inset-0 radar-grid-bg pointer-events-none z-0" />
+            <Navbar />
+            <main className="flex-1 relative z-10">{children}</main>
+            <FloatingCompareBar />
+            <footer className="relative z-10 border-t border-gray-800/80 bg-[#0B0F17]/95 py-6 mt-12 text-xs text-gray-400 font-mono">
+              <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <p>AI Model Radar &copy; {new Date().getFullYear()} — Powered by OpenRouter, GitHub &amp; Hugging Face.</p>
+                <div className="flex items-center gap-4">
+                  <Link href="/compare" className="hover:text-cyan-400 transition-colors">Compare</Link>
+                  <Link href="/privacy" className="hover:text-cyan-400 transition-colors">Privacy Policy</Link>
+                  <Link href="/terms" className="hover:text-cyan-400 transition-colors">Terms of Service</Link>
+                  <Link href="/contact" className="hover:text-cyan-400 transition-colors">Support &amp; Security</Link>
+                  <Link href="/feed.xml" className="hover:text-amber-400 transition-colors">RSS Feed</Link>
+                </div>
               </div>
-            </div>
-          </footer>
+            </footer>
+          </CompareProvider>
         </WatchlistProvider>
       </body>
     </html>

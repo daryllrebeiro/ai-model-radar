@@ -40,6 +40,7 @@ export function Navbar() {
 
   const mainNavItems = [
     { name: 'Feed', href: '/', icon: Activity },
+    { name: 'Compare', href: '/compare', icon: Scale },
     { name: 'Deals', href: '/deals', icon: Tag },
     { name: 'Arbitrage', href: '/arbitrage', icon: Scale },
     { name: 'Benchmarks', href: '/benchmarks', icon: Award },

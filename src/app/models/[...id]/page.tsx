@@ -5,6 +5,8 @@ import { getModelDetail } from '@/lib/db/queries';
 import { PriceChart } from '@/components/models/price-chart';
 import { ModelSpecs } from '@/components/models/model-specs';
 import { EventCard } from '@/components/feed/event-card';
+import { CompareButton } from '@/components/compare/compare-button';
+import { WatchButton } from '@/components/watchlist/watch-button';
 import { ArrowLeft, Cpu, Activity, History, LineChart } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -40,25 +42,32 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
         </Link>
       </div>
 
-      {/* Model Header Title */}
-      <div className="border-b border-gray-800 pb-6">
-        <div className="flex flex-wrap items-center gap-2 mb-2">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-cyan-950/80 border border-cyan-800/60 text-cyan-300">
-            <Cpu className="w-3.5 h-3.5" />
-            {current.provider}
-          </span>
-          {current.is_free && (
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
-              100% Free Model
+      {/* Model Header Title & Action Buttons */}
+      <div className="border-b border-gray-800 pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold bg-cyan-950/80 border border-cyan-800/60 text-cyan-300">
+              <Cpu className="w-3.5 h-3.5" />
+              {current.provider}
             </span>
-          )}
+            {current.is_free && (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
+                100% Free Model
+              </span>
+            )}
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+            {current.name}
+          </h1>
+          <p className="text-xs sm:text-sm font-mono text-gray-400 mt-1">
+            {current.model_id}
+          </p>
         </div>
-        <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-          {current.name}
-        </h1>
-        <p className="text-xs sm:text-sm font-mono text-gray-400 mt-1">
-          {current.model_id}
-        </p>
+
+        <div className="flex items-center gap-3 shrink-0">
+          <WatchButton modelId={current.model_id} showText={true} />
+          <CompareButton modelId={current.model_id} variant="standard" />
+        </div>
       </div>
 
       {/* 1. Current Specifications Grid */}
