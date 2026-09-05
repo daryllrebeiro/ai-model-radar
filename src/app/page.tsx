@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { getEvents, getMarketStats } from '@/lib/db/queries';
 import { MarketStatsBanner } from '@/components/market-stats-banner';
 import { EventFeed } from '@/components/feed/event-feed';
@@ -7,6 +8,13 @@ import { Radio, Zap, Scale, ArrowRight, Check } from 'lucide-react';
 import { isBillingEnabled } from '@/lib/feature-flags';
 
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+  title: 'AI Model Radar — Real-time AI Model Price Drops, Releases & Arbitrage',
+  description:
+    'Live, automated changelog of AI model prices, free-tier releases, context-length upgrades, and cross-provider arbitrage opportunities across all major labs.',
+  alternates: { canonical: '/' },
+};
 
 export default async function HomePage() {
   const [eventsData, stats] = await Promise.all([

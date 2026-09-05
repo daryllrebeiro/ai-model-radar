@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getModelDetail, getModelCurrentList } from '@/lib/db/queries';
 import { PriceChart } from '@/components/models/price-chart';
@@ -10,13 +11,36 @@ import { WatchButton } from '@/components/watchlist/watch-button';
 import { MigrationAlternativesCard } from '@/components/models/migration-alternatives-card';
 import { BadgeEmbedCard } from '@/components/models/badge-embed-card';
 import { findMigrationAlternatives } from '@/lib/migration-advisor';
-import { ArrowLeft, Cpu, Activity, History, LineChart, Sparkles } from 'lucide-react';
+import { ArrowLeft, Cpu, Activity, History, LineChart } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
 interface ModelDetailPageProps {
   params: {
     id: string[];
+  };
+}
+
+export async function generateMetadata({ params }: ModelDetailPageProps): Promise<Metadata> {
+  const rawId = Array.isArray(params.id) ? params.id.join('/') : params.id;
+  const modelId = decodeURIComponent(rawId);
+  const data = await getModelDetail(modelId).catch(() => null);
+
+  if (!data?.current) {
+    return { title: 'Model not found' };
+  }
+
+  const { name, model_id, price_prompt, price_completion } = data.current;
+  return {
+    title: `${name} — Pricing & Changelog`,
+    description: `Live pricing, release history and context-window changelog for ${name} (${model_id}). Currently $${price_prompt?.toFixed(4) ?? '?'}/1M input, $${price_completion?.toFixed(4) ?? '?'}/1M output.`,
+    alternates: { canonical: `/models/${encodeURIComponent(model_id)}` },
+    openGraph: {
+      title: `${name} — Pricing & Changelog`,
+      description: `Price and release history for ${name} on AI Model Radar.`,
+      url: `/models/${encodeURIComponent(model_id)}`,
+      type: 'website',
+    },
   };
 }
 
@@ -102,7 +126,7 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
             {snapshots.length} snapshots recorded
           </span>
         </div>
-        <PriceChart snapshots={snapshots} />
+        <PriceChart snapshots={snapshots} events={events} />
       </section>
 
       {/* 4. Embed Live Price Badge */}

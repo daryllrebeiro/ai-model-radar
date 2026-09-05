@@ -5,27 +5,47 @@ import { Navbar } from '@/components/navbar';
 import { WatchlistProvider } from '@/components/watchlist/watchlist-context';
 import { CompareProvider } from '@/components/compare/compare-context';
 import { FloatingCompareBar } from '@/components/compare/floating-compare-bar';
-import { validateEnv } from '@/lib/env';
+import { validateEnv, baseUrl } from '@/lib/env';
 
 // Enforce environment validation on server boot
 validateEnv();
 
+const siteUrl = baseUrl();
+
 export const metadata: Metadata = {
-  title: 'AI Model Radar — Real-time AI Model Changelog, Price Drops & Arbitrage Engine',
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: 'AI Model Radar — Real-time AI Model Changelog, Price Drops & Arbitrage Engine',
+    template: '%s — AI Model Radar',
+  },
   description:
     'One unified feed of every price drop, free tier addition, new model release, and arbitrage opportunity across OpenRouter, DeepSeek, Anthropic, OpenAI, Meta, and Mistral.',
+  alternates: {
+    canonical: '/',
+    types: {
+      'application/rss+xml': '/feed.xml',
+      'application/feed+json': '/api/feed/json',
+    },
+  },
   openGraph: {
     title: 'AI Model Radar — Real-time AI Model Changelog & Price Intelligence',
     description: 'Track pricing shifts, new releases, and cost arbitrage opportunities in real time.',
-    url: 'https://modelradar.ai',
+    url: siteUrl,
     siteName: 'AI Model Radar',
     locale: 'en_US',
     type: 'website',
+    images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'AI Model Radar' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'AI Model Radar',
     description: 'Real-time AI Model Changelog, Price Drops & Arbitrage Engine',
+    images: ['/opengraph-image'],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1 },
   },
 };
 
@@ -68,6 +88,7 @@ export default function RootLayout({
                 <p>AI Model Radar &copy; {new Date().getFullYear()} — Powered by OpenRouter, GitHub &amp; Hugging Face.</p>
                 <div className="flex items-center gap-4">
                   <Link href="/compare" className="hover:text-cyan-400 transition-colors">Compare</Link>
+                  <Link href="/pricing" className="hover:text-cyan-400 transition-colors">Pricing</Link>
                   <Link href="/privacy" className="hover:text-cyan-400 transition-colors">Privacy Policy</Link>
                   <Link href="/terms" className="hover:text-cyan-400 transition-colors">Terms of Service</Link>
                   <Link href="/contact" className="hover:text-cyan-400 transition-colors">Support &amp; Security</Link>
