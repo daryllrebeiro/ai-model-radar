@@ -1,6 +1,9 @@
 import { NextRequest } from 'next/server';
-import { getUserByEmail, createOrGetUser, UserRecord } from './db/queries';
+import { getServerSession } from 'next-auth';
+import { authOptions } from './auth.config';
+import { createOrGetUser, UserRecord } from './db/queries';
 import { verifyApiKey } from './api-keys';
+import { logger } from './logger';
 
 export interface AuthSession {
   user: UserRecord;
@@ -8,20 +11,25 @@ export interface AuthSession {
 }
 
 /**
- * Extracts and resolves current authenticated user from Next.js request.
- * Supports Bearer token / header email / API key auth.
+ * Resolves the authenticated user from a Next.js request.
+ * Priority: NextAuth session cookie > API key Bearer token.
+ * X-User-Email header is NOT trusted — it was removed in P11.1.
  */
 export async function getSessionUser(request: NextRequest): Promise<AuthSession | null> {
-  const authHeader = request.headers.get('authorization') || request.headers.get('Authorization');
-  const userEmailHeader = request.headers.get('x-user-email') || request.headers.get('X-User-Email');
-
-  // 1. Direct user session email header (from edge middleware / auth proxy)
-  if (userEmailHeader) {
-    const user = await createOrGetUser({ email: userEmailHeader });
-    return { user, authMethod: 'session' };
+  // 1. NextAuth JWT session cookie (magic link sign-in)
+  try {
+    const session = await getServerSession(authOptions);
+    if (session?.user?.email) {
+      const user = await createOrGetUser({ email: session.user.email });
+      return { user, authMethod: 'session' };
+    }
+  } catch (err: any) {
+    // AUTH_SECRET not configured or other non-fatal issue — fall through to API key check
+    logger.debug(`getSessionUser: getServerSession fallback: ${err.message}`);
   }
 
-  // 2. Bearer API key or Token
+  // 2. Bearer API key (machine-to-machine / programmatic access)
+  const authHeader = request.headers.get('authorization') || request.headers.get('Authorization');
   if (authHeader) {
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
     if (token.startsWith('amr_live_')) {
