@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deliverWebhookPayload } from '@/lib/webhooks';
+import { requireFeature } from '@/lib/access-guard';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,9 @@ const testWebhookSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const { error } = await requireFeature(request, 'PRICE_ALERTS_WEBHOOK');
+    if (error) return error;
+
     const body = await request.json();
     const parsed = testWebhookSchema.safeParse(body);
 
@@ -57,11 +61,10 @@ export async function POST(request: NextRequest) {
       signature: deliveryResult.signature || null,
       error: deliveryResult.error || null,
     });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
       {
         error: 'Failed to trigger test webhook delivery',
-        message: error.message || String(error),
       },
       { status: 500 }
     );

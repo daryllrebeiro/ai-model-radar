@@ -10,6 +10,26 @@ export interface AlertRuleConfig {
   digestFrequency: 'instant' | 'daily' | 'weekly';
   notificationChannel: 'in_app' | 'email' | 'webhook';
   webhookUrl?: string;
+  // ── Advanced Alert Rules (Pro, ADVANCED_ALERT_RULES) ──────────
+  mode?: 'basic' | 'advanced';
+  minAbsoluteDropUsd?: number; // require prompt $/1M drop >= N
+  maxContextWindowTokens?: number; // only models with context <= N
+  minContextWindowTokens?: number; // only models with context >= N
+  requireFamousFamilies?: boolean; // only well-known model families
+  suppressProviders?: string[]; // never alert on these providers
+  matchModelId?: string; // optional exact/partial model_id match
+}
+
+export interface AlertScore {
+  event: ModelEvent;
+  score: number;
+  reasons: string[];
+  matchedAdvanced: boolean;
+}
+
+export interface AdvancedAlertResult {
+  events: AlertScore[];
+  total: number;
 }
 
 export interface GeneratedDigest {

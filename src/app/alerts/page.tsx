@@ -2,20 +2,21 @@
 
 import React, { useState, useEffect } from 'react';
 import { AlertRuleConfig, GeneratedDigest } from '@/types/alerts';
-import { DEFAULT_ALERT_CONFIG, evaluateAlertRules } from '@/lib/alerts';
+import { DEFAULT_ALERT_CONFIG, evaluateAlertRules, evaluateAdvancedAlertRules } from '@/lib/alerts';
 import { ModelEvent } from '@/types/events';
 import { EventCard } from '@/components/feed/event-card';
+import { FeatureGate } from '@/components/FeatureGate';
 import {
   Bell,
   Sliders,
   Sparkles,
-  TrendingDown,
   Gift,
   Mail,
   Webhook,
   CheckCircle,
   Clock,
   Shield,
+  Zap,
 } from 'lucide-react';
 import { useWatchlist } from '@/components/watchlist/watchlist-context';
 
@@ -23,7 +24,6 @@ export default function AlertsPage() {
   const { watchedIds } = useWatchlist();
   const [config, setConfig] = useState<AlertRuleConfig>(DEFAULT_ALERT_CONFIG);
   const [events, setEvents] = useState<ModelEvent[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
   const [webhookSent, setWebhookSent] = useState<boolean>(false);
 
@@ -42,8 +42,7 @@ export default function AlertsPage() {
       .then((data) => {
         if (data.events) setEvents(data.events);
       })
-      .catch((err) => console.error(err))
-      .finally(() => setLoading(false));
+      .catch((err) => console.error(err));
   }, []);
 
   const handleSaveConfig = () => {
@@ -54,7 +53,9 @@ export default function AlertsPage() {
     } catch {}
   };
 
-  const digest: GeneratedDigest = evaluateAlertRules(events, config, watchedIds);
+  const digest: GeneratedDigest = evaluateAlertRules(events, config);
+  const advancedDigest =
+    config.mode === 'advanced' ? evaluateAdvancedAlertRules(events, config, watchedIds) : null;
 
   const availableProviders = ['OpenAI', 'Anthropic', 'Google', 'DeepSeek', 'Meta', 'Mistral', 'Qwen / Alibaba', 'xAI'];
 
@@ -103,6 +104,32 @@ export default function AlertsPage() {
                 </span>
               )}
             </div>
+
+            {/* Basic / Advanced Mode */}
+            <FeatureGate feature="ADVANCED_ALERT_RULES">
+              <div className="flex rounded-xl border border-gray-700 overflow-hidden p-0.5 bg-gray-900">
+                <button
+                  onClick={() => setConfig({ ...config, mode: 'basic' })}
+                  className={`flex-1 text-xs font-semibold py-1.5 rounded-lg transition-colors ${
+                    config.mode !== 'advanced'
+                      ? 'bg-cyan-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  Basic
+                </button>
+                <button
+                  onClick={() => setConfig({ ...config, mode: 'advanced' })}
+                  className={`flex-1 text-xs font-semibold py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1 ${
+                    config.mode === 'advanced'
+                      ? 'bg-cyan-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  <Zap className="w-3.5 h-3.5" /> Advanced
+                </button>
+              </div>
+            </FeatureGate>
 
             {/* Price Drop Threshold Slider */}
             <div>
@@ -214,6 +241,82 @@ export default function AlertsPage() {
               )}
             </div>
 
+            {/* Advanced Controls (Pro) */}
+            <FeatureGate feature="ADVANCED_ALERT_RULES">
+              {config.mode === 'advanced' && (
+                <div className="pt-2 border-t border-gray-800 space-y-4">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
+                    <Zap className="w-3.5 h-3.5" /> Advanced Compound Filters
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">Min absolute $ drop /1M</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={config.minAbsoluteDropUsd ?? ''}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            minAbsoluteDropUsd: e.target.value === '' ? undefined : Number(e.target.value),
+                          })
+                        }
+                        placeholder="0.50"
+                        className="w-full bg-gray-900 border border-gray-800 text-xs text-gray-200 rounded-lg p-2 focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">Min context (tokens)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={config.minContextWindowTokens ?? ''}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            minContextWindowTokens:
+                              e.target.value === '' ? undefined : Number(e.target.value),
+                          })
+                        }
+                        placeholder="32000"
+                        className="w-full bg-gray-900 border border-gray-800 text-xs text-gray-200 rounded-lg p-2 focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-gray-400 block mb-1">Model ID contains</label>
+                    <input
+                      type="text"
+                      value={config.matchModelId ?? ''}
+                      onChange={(e) =>
+                        setConfig({ ...config, matchModelId: e.target.value || undefined })
+                      }
+                      placeholder="claude, gpt, deepseek…"
+                      className="w-full bg-gray-900 border border-gray-800 text-xs text-gray-200 rounded-lg p-2 focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  <label className="flex items-center justify-between text-xs text-gray-200 cursor-pointer">
+                    <span className="flex items-center gap-2">
+                      <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                      Only recognize model families
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(config.requireFamousFamilies)}
+                      onChange={(e) =>
+                        setConfig({ ...config, requireFamousFamilies: e.target.checked })
+                      }
+                      className="rounded accent-cyan-500 w-4 h-4"
+                    />
+                  </label>
+                </div>
+              )}
+            </FeatureGate>
+
             <button
               onClick={handleSaveConfig}
               className="w-full py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs transition-colors shadow-sm"
@@ -228,19 +331,64 @@ export default function AlertsPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
               <Mail className="w-4 h-4 text-cyan-400" />
-              Live Digest Preview ({digest.totalMatchingEvents} Qualifying Events)
+              Live Digest Preview (
+              {config.mode === 'advanced'
+                ? advancedDigest?.total ?? 0
+                : digest.totalMatchingEvents}{' '}
+              Qualifying Events)
             </h2>
             <span className="text-xs font-mono text-gray-400">
-              Noise filtered out: {events.length - digest.totalMatchingEvents} minor events
+              {config.mode === 'advanced'
+                ? 'Advanced compound filters active'
+                : `Noise filtered out: ${events.length - digest.totalMatchingEvents} minor events`}
             </span>
           </div>
 
           <div className="p-4 rounded-xl border border-gray-800 bg-gray-900/40 text-xs text-gray-300 font-mono">
-            <span className="text-cyan-400 font-bold">Digest Summary: </span>
-            {digest.priceDropEvents.length} price cuts (≥ {config.minPriceDropPct}%), {digest.freeTierEvents.length} free additions, and {digest.newModelEvents.length} releases match your rules.
+            {config.mode === 'advanced' ? (
+              <>
+                <span className="text-cyan-400 font-bold">Advanced Summary: </span>
+                {advancedDigest?.total ?? 0} events match your compound filters; top score{' '}
+                {advancedDigest?.events[0]?.score ?? 0}/100.
+              </>
+            ) : (
+              <>
+                <span className="text-cyan-400 font-bold">Digest Summary: </span>
+                {digest.priceDropEvents.length} price cuts (≥ {config.minPriceDropPct}%), {digest.freeTierEvents.length} free additions, and {digest.newModelEvents.length} releases match your rules.
+              </>
+            )}
           </div>
 
-          {digest.totalMatchingEvents > 0 ? (
+          {config.mode === 'advanced' ? (
+            advancedDigest && advancedDigest.events.length > 0 ? (
+              <div className="space-y-3">
+                {advancedDigest.events.map(({ event: e, score, reasons }) => (
+                  <div key={e.id || `${e.model_id}-${score}`} className="rounded-xl border border-cyan-900/40 bg-[#111827]/70 p-3">
+                    <EventCard event={e} />
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {reasons.map((r) => (
+                          <span
+                            key={r}
+                            className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 border border-cyan-800/50 px-1.5 py-0.5 rounded"
+                          >
+                            {r}
+                          </span>
+                        ))}
+                      </div>
+                      <span className="text-xs font-mono font-bold text-cyan-300 shrink-0">
+                        Score {score}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-12 text-center rounded-2xl border border-gray-800 bg-[#111827]/40 text-gray-400 text-sm">
+                No events match your advanced compound filters.
+              </div>
+            )
+          ) : digest.totalMatchingEvents > 0 ? (
             <div className="space-y-3">
               {[
                 ...digest.priceDropEvents,

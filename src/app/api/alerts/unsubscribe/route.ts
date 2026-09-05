@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyUnsubscribeToken } from '@/lib/email/resend';
 import { getActiveAlertRules, updateAlertRuleStatus } from '@/lib/db/queries';
+import { escapeHtml } from '@/lib/sanitize';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Return friendly HTML confirmation page
+    const safeEmail = escapeHtml(email);
     const htmlResponse = `
 <!DOCTYPE html>
 <html lang="en">
@@ -45,7 +47,7 @@ export async function GET(request: NextRequest) {
 <body>
   <div class="card">
     <h1>Successfully Unsubscribed</h1>
-    <p>You have been unsubscribed from AI Model Radar email digests for <strong>${email}</strong>.</p>
+    <p>You have been unsubscribed from AI Model Radar email digests for <strong>${safeEmail}</strong>.</p>
     <p>You will no longer receive periodic email updates.</p>
     <a href="/">Return to AI Model Radar &rarr;</a>
   </div>
@@ -57,7 +59,7 @@ export async function GET(request: NextRequest) {
       status: 200,
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: 'Failed to process unsubscribe request' }, { status: 500 });
   }
 }
