@@ -2,7 +2,11 @@ export type MarketSignalType =
   | 'PRICE_ANOMALY'
   | 'STEALTH_ENDPOINT'
   | 'RAPID_PRICE_WAR'
-  | 'CONTEXT_BREAKTHROUGH';
+  | 'CONTEXT_BREAKTHROUGH'
+  | 'FREE_GRADIENT'
+  | 'CONTEXT_EXPANSION'
+  | 'SECTOR_PRICE_WAR'
+  | 'MODEL_EOL';
 
 export interface MarketSignal {
   id: string;
@@ -19,4 +23,7 @@ export interface MarketSignal {
   };
   detected_at: string;
   severity: 'high' | 'medium' | 'info';
+  // Enhanced Market Signals (Pro): confidence scoring on 0..100
+  strength?: number;
+  strength_factors?: string[];
 }
