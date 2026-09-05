@@ -4,8 +4,8 @@ import {
   getUserWatchlist,
   addToWatchlist,
   removeFromWatchlist,
-  createOrGetUser,
 } from '@/lib/db/queries';
+import { handleApiError } from '@/lib/api-error-handler';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,31 +23,29 @@ export async function GET(request: NextRequest) {
       email: session.user.email,
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return handleApiError(error, 'watchlists GET');
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const session = await getSessionUser(request);
+
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Authenticated session is required' },
+        { status: 401 }
+      );
+    }
+
     const body = await request.json();
-    const { modelId, action, email } = body;
+    const { modelId, action } = body;
 
     if (!modelId) {
       return NextResponse.json({ error: 'modelId is required' }, { status: 400 });
     }
 
-    let user = session?.user;
-    if (!user && email) {
-      user = await createOrGetUser({ email });
-    }
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Authenticated session or user email is required' },
-        { status: 401 }
-      );
-    }
+    const user = session.user;
 
     if (action === 'remove') {
       await removeFromWatchlist(user.id, modelId);
@@ -63,6 +61,6 @@ export async function POST(request: NextRequest) {
       watchlist: updated,
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return handleApiError(error, 'watchlists POST');
   }
 }

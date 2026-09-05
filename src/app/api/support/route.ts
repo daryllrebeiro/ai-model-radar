@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { email, category, message } = parsed.data;
+    const { email, category } = parsed.data;
 
     logger.info(`Support ticket created: [${category}] from ${email}`);
 
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       message: 'Support request received. Engineering will review your inquiry.',
       timestamp: new Date().toISOString(),
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: 'Failed to submit support request' }, { status: 500 });
   }
 }

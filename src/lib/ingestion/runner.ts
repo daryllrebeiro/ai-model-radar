@@ -1,5 +1,5 @@
 import { fetchOpenRouterModels, normalizeOpenRouterModel } from './openrouter';
-import { computeModelDiffs, DiffResult } from './diff';
+import { computeModelDiffs } from './diff';
 import {
   getLatestSnapshotsMap,
   getKnownModelIds,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRecentEvents, getModelCurrentList, getModelDetail } from '@/lib/db/queries';
+import { getRecentEvents, getModelCurrentList } from '@/lib/db/queries';
 import { computeArbitrageOpportunities } from '@/lib/arbitrage';
 import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
 import { trackEvent } from '@/lib/analytics';
@@ -13,8 +13,6 @@ export async function POST(request: NextRequest) {
     let commandText = '';
     let isSlack = false;
     let isDiscord = false;
-    let discordInteractionId = '';
-    let discordToken = '';
 
     if (contentType.includes('application/x-www-form-urlencoded')) {
       // Slack slash command format
@@ -31,8 +29,6 @@ export async function POST(request: NextRequest) {
       }
 
       isDiscord = true;
-      discordInteractionId = body.id;
-      discordToken = body.token;
 
       // Extract command and arguments from Discord options
       if (body.data?.name) {
@@ -206,7 +202,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     logger.error(`Bot slash router failed: ${error.message}`);
     return NextResponse.json(
-      { error: 'Failed to process bot command', details: error.message },
+      { error: 'Failed to process bot command' },
       { status: 500 }
     );
   }

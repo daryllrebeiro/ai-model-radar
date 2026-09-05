@@ -19,12 +19,12 @@ export async function GET() {
       lastPolledAt: stats.lastPolledAt,
       version: '1.0.0',
     });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
       {
         status: 'unhealthy',
         timestamp: new Date().toISOString(),
-        error: error.message || String(error),
+        error: 'Health check failed',
       },
       { status: 500 }
     );

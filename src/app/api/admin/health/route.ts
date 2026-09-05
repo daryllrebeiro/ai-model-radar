@@ -9,22 +9,25 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   const adminSecret = process.env.ADMIN_SECRET;
 
-  if (adminSecret) {
-    const authHeader = request.headers.get('authorization');
-    const secretHeader = request.headers.get('x-admin-secret');
-    const querySecret = request.nextUrl.searchParams.get('secret');
+  if (!adminSecret) {
+    return NextResponse.json(
+      { error: 'Admin authentication not configured.' },
+      { status: 401 }
+    );
+  }
 
-    const isAuthorized =
-      authHeader === `Bearer ${adminSecret}` ||
-      secretHeader === adminSecret ||
-      querySecret === adminSecret;
+  const authHeader = request.headers.get('authorization');
+  const secretHeader = request.headers.get('x-admin-secret');
 
-    if (!isAuthorized) {
-      return NextResponse.json(
-        { error: 'Unauthorized: Valid ADMIN_SECRET bearer token or x-admin-secret header required.' },
-        { status: 401 }
-      );
-    }
+  const isAuthorized =
+    authHeader === `Bearer ${adminSecret}` ||
+    secretHeader === adminSecret;
+
+  if (!isAuthorized) {
+    return NextResponse.json(
+      { error: 'Unauthorized: Valid ADMIN_SECRET bearer token or x-admin-secret header required.' },
+      { status: 401 }
+    );
   }
 
   try {
@@ -71,9 +74,9 @@ export async function GET(request: NextRequest) {
       sources: sourceStatus,
       recentRuns: runs,
     });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
-      { error: error.message || 'Internal health check failure' },
+      { error: 'Internal health check failure' },
       { status: 500 }
     );
   }

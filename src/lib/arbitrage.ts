@@ -1,5 +1,4 @@
 import { ModelSnapshot } from '@/types/models';
-import { formatPricePerMillion } from './utils';
 
 export interface ArbitrageProviderOption {
   model_id: string;

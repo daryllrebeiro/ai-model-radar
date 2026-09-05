@@ -1,19 +1,13 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import Link from 'next/link';
 import { RawBenchmarkRecord, CustomBenchmarkWeights } from '@/types/benchmarks';
 import { calculateClientPriorityScore } from '@/lib/benchmarks';
-import { formatPricePerMillion } from '@/lib/utils';
 import {
   SlidersHorizontal,
   ExternalLink,
-  ChevronRight,
-  TrendingUp,
-  Cpu,
   RotateCcw,
   Sparkles,
-  Award,
 } from 'lucide-react';
 import { WatchButton } from '../watchlist/watch-button';
 
@@ -297,7 +291,7 @@ export function BenchmarkMatrix({ initialRecords }: BenchmarkMatrixProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800/60">
-            {processedRecords.map((r, idx) => (
+            {processedRecords.map((r) => (
               <tr key={r.model_id} className="hover:bg-gray-800/40 transition-colors">
                 {/* Model Name & ID */}
                 <td className="py-3 px-4 font-sans">

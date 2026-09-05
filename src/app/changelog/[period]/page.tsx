@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getRecentEvents } from '@/lib/db/queries';
 import { EventCard } from '@/components/feed/event-card';
-import { ArrowLeft, Calendar, Sparkles, TrendingDown, TrendingUp, Maximize2, Trash2, Cpu } from 'lucide-react';
+import { ArrowLeft, Calendar, Sparkles, TrendingDown, TrendingUp, Maximize2 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 

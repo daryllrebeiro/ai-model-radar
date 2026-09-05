@@ -1,14 +1,4 @@
 import { z } from 'zod';
-import { EventType } from '@/types/events';
-
-const VALID_EVENT_TYPES: [EventType, ...EventType[]] = [
-  'NEW_MODEL',
-  'MODEL_REMOVED',
-  'PRICE_CHANGE',
-  'BECAME_FREE',
-  'LEFT_FREE',
-  'CONTEXT_CHANGED',
-];
 
 export const modelsQuerySchema = z.object({
   q: z.string().max(100).optional(),

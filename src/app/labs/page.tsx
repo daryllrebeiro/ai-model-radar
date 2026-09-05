@@ -1,6 +1,6 @@
 import React from 'react';
 import { fetchLabActivity } from '@/lib/ingestion/github-labs';
-import { GitBranch, GitCommit, Tag, ExternalLink, Code2, Clock } from 'lucide-react';
+import { GitBranch, GitCommit, ExternalLink } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';

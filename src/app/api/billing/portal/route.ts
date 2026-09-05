@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth';
 import { getUserByEmail } from '@/lib/db/queries';
+import { handleApiError } from '@/lib/api-error-handler';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
     const session = await getSessionUser(request);
-    const body = await request.json().catch(() => ({}));
-    const email = body.email || session?.user.email;
 
-    if (!email) {
-      return NextResponse.json({ error: 'User email or active session required' }, { status: 401 });
+    if (!session) {
+      return NextResponse.json({ error: 'Authenticated session required' }, { status: 401 });
     }
 
+    const email = session.user.email;
+    const body = await request.json().catch(() => ({}));
     const user = await getUserByEmail(email);
     const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
     const returnUrl = body.returnUrl || `${request.headers.get('origin') || 'http://localhost:3000'}/alerts`;
@@ -44,6 +45,6 @@ export async function POST(request: NextRequest) {
       url: `${returnUrl}?portal=mock&customer=${user?.stripe_customer_id || 'guest'}`,
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return handleApiError(error, 'billing/portal');
   }
 }

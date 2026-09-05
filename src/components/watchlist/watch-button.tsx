@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useWatchlist } from './watchlist-context';
-import { Bookmark, Star } from 'lucide-react';
+import { Star } from 'lucide-react';
 
 interface WatchButtonProps {
   modelId: string;

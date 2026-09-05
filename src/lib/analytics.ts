@@ -25,7 +25,7 @@ export interface AnalyticsEvent {
 // Server-side aggregated event counter for baseline measurement
 const serverEventCounters: Record<string, number> = {};
 
-export function trackServerEvent(action: AnalyticsAction | string, properties?: Record<string, any>): void {
+export function trackServerEvent(action: AnalyticsAction | string, _properties?: Record<string, any>): void {
   const key = String(action);
   serverEventCounters[key] = (serverEventCounters[key] || 0) + 1;
 }

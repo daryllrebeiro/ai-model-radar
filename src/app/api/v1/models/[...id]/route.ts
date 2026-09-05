@@ -22,7 +22,8 @@ export async function GET(
   if (!detail) {
     return apiJsonResponse(
       { error: 'Model not found', model_id: modelId },
-      { ...auth.rateLimitHeaders, status: '404' }
+      auth.rateLimitHeaders,
+      404
     );
   }
 

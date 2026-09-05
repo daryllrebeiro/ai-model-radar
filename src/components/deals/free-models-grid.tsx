@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { ModelCurrent } from '@/types/models';
 import { formatContextLength, formatRelativeTime } from '@/lib/utils';
-import { Gift, Cpu, ChevronRight, Maximize2, Layers } from 'lucide-react';
+import { Gift, ChevronRight, Maximize2, Layers } from 'lucide-react';
 
 interface FreeModelsGridProps {
   models: ModelCurrent[];

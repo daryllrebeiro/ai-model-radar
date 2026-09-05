@@ -23,7 +23,7 @@ export function EventFeed({ initialEvents }: EventFeedProps) {
   const [hasInitializedTab, setHasInitializedTab] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
 
-  const [events, setEvents] = useState<ModelEvent[]>(initialEvents);
+  const [events] = useState<ModelEvent[]>(initialEvents);
   const [selectedType, setSelectedType] = useState<EventType | 'ALL'>('ALL');
   const [selectedProvider, setSelectedProvider] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');

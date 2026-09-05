@@ -2,8 +2,8 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { MigrationReport, MigrationAlternative } from '@/lib/migration-advisor';
-import { ArrowRight, Scale, TrendingDown, CheckCircle, ExternalLink, Cpu, Sparkles } from 'lucide-react';
+import { MigrationReport } from '@/lib/migration-advisor';
+import { ArrowRight, Scale, TrendingDown, Cpu, Sparkles } from 'lucide-react';
 import { CompareButton } from '../compare/compare-button';
 import { trackEvent } from '@/lib/analytics';
 

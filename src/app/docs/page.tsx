@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Terminal, Code2, Copy, Check, ExternalLink, ShieldCheck, Key, Zap } from 'lucide-react';
+import { Code2, Copy, Check, ShieldCheck, Key, Zap } from 'lucide-react';
 
 export default function ApiDocsPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);

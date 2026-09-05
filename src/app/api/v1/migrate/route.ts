@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     logger.error(`Migration API error: ${error.message}`);
     return NextResponse.json(
-      { error: 'Failed to generate migration recommendations', details: error.message },
+      { error: 'Failed to generate migration recommendations' },
       { status: 500 }
     );
   }

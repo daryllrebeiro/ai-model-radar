@@ -1,7 +1,6 @@
 import React from 'react';
 import { fetchHuggingFaceTrending } from '@/lib/ingestion/huggingface';
-import { HuggingFaceModel } from '@/types/community';
-import { Users, Download, Heart, Flame, ExternalLink, Tag, Sparkles } from 'lucide-react';
+import { Users, Download, Heart, Flame, ExternalLink, Sparkles } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';

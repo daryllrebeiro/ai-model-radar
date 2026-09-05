@@ -1,6 +1,5 @@
 import { ModelSnapshot } from '@/types/models';
 import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
-import { RawBenchmarkRecord } from '@/types/benchmarks';
 
 export interface MigrationAlternative {
   model_id: string;
@@ -51,7 +50,7 @@ export function findMigrationAlternatives(
   const normalizedTargetId = targetModelId.toLowerCase().trim();
 
   // Find target in snapshots or benchmark catalog
-  let target = snapshots.find(
+  const target = snapshots.find(
     (s) =>
       s.model_id.toLowerCase() === normalizedTargetId ||
       s.model_id.toLowerCase().includes(normalizedTargetId) ||

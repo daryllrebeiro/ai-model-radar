@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useWatchlist } from '../watchlist/watchlist-context';
-import { Layers, Check, X, Sparkles, ArrowRight } from 'lucide-react';
+import { Layers, Check, X, ArrowRight } from 'lucide-react';
 import { trackEvent } from '@/lib/analytics';
 
 export const POPULAR_STACK_PRESETS = [

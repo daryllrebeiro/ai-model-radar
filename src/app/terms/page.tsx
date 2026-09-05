@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, CheckCircle2, ExternalLink, Scale, FileText, Globe } from 'lucide-react';
+import { Shield, CheckCircle2, ExternalLink, Scale, Globe } from 'lucide-react';
 import Link from 'next/link';
 
 export default function TermsPage() {

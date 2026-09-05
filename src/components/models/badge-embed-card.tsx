@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Copy, Check, Code2, ExternalLink } from 'lucide-react';
+import Image from 'next/image';
+import { Copy, Check, Code2 } from 'lucide-react';
 import { trackEvent } from '@/lib/analytics';
 
 interface BadgeEmbedCardProps {
@@ -31,10 +32,13 @@ export function BadgeEmbedCard({ modelId, modelName }: BadgeEmbedCardProps) {
         </div>
         <div className="shrink-0">
           {/* Real-time Badge Preview */}
-          <img
+          <Image
             src={`/badge/${encodeURIComponent(modelId)}/price.svg`}
             alt={`${modelName} Badge Preview`}
-            className="h-5 rounded"
+            width={88}
+            height={31}
+            unoptimized
+            className="h-5 w-auto rounded"
           />
         </div>
       </div>

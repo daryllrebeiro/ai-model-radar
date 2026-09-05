@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Sparkles, ArrowRight, X, Layers, Cpu, Scale } from 'lucide-react';
+import { Search, ArrowRight, X, Layers, Cpu } from 'lucide-react';
 import { trackEvent } from '@/lib/analytics';
 
 interface SearchResult {

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { MarketStats } from '@/types/events';
-import { TrendingDown, Sparkles, Gift, Cpu, Clock } from 'lucide-react';
+import { TrendingDown, Sparkles, Gift, Cpu } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
 
 interface MarketStatsBannerProps {

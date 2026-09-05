@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, X, Search, Scale } from 'lucide-react';
+import { Plus, X, Search } from 'lucide-react';
 import { useCompare } from './compare-context';
 
 interface ModelOption {

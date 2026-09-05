@@ -5,7 +5,7 @@ import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
 import { computeArbitrageOpportunities } from '@/lib/arbitrage';
 import { PriceChart } from '@/components/models/price-chart';
 import { CompareButton } from '@/components/compare/compare-button';
-import { Scale, ArrowLeft, Share2, Check, Sparkles, AlertCircle, ExternalLink, Zap } from 'lucide-react';
+import { Scale, ArrowLeft, Sparkles, ExternalLink } from 'lucide-react';
 import { ShareButton } from '@/components/compare/share-button';
 import { CompareModelSelector } from '@/components/compare/compare-model-selector';
 

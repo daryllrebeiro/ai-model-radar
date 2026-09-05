@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getModelDetail } from '@/lib/db/queries';
 import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
 import { trackEvent } from '@/lib/analytics';
+import { escapeXml, sanitizeColor } from '@/lib/sanitize';
 
 export const dynamic = 'force-dynamic';
 
@@ -81,9 +82,13 @@ export async function GET(request: NextRequest, { params }: BadgeRouteProps) {
     const totalWidth = leftWidth + rightWidth;
     const radius = style === 'flat-square' ? 0 : 3;
 
+    const safeLabel = escapeXml(leftLabel);
+    const safeText = escapeXml(rightText);
+    const safeColor = sanitizeColor(rightColor);
+
     const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${totalWidth}" height="20" role="img" aria-label="${leftLabel}: ${rightText}">
-  <title>${leftLabel}: ${rightText}</title>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${totalWidth}" height="20" role="img" aria-label="${safeLabel}: ${safeText}">
+  <title>${safeLabel}: ${safeText}</title>
   <linearGradient id="s" x2="0" y2="100%">
     <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
     <stop offset="1" stop-opacity=".1"/>
@@ -93,14 +98,14 @@ export async function GET(request: NextRequest, { params }: BadgeRouteProps) {
   </clipPath>
   <g clip-path="url(#r)">
     <rect width="${leftWidth}" height="20" fill="#1F2937"/>
-    <rect x="${leftWidth}" width="${rightWidth}" height="20" fill="${rightColor}"/>
+    <rect x="${leftWidth}" width="${rightWidth}" height="20" fill="${safeColor}"/>
     <rect width="${totalWidth}" height="20" fill="url(#s)"/>
   </g>
   <g fill="#fff" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" text-rendering="geometricPrecision" font-size="110">
-    <text aria-hidden="true" x="${(leftWidth / 2) * 10}" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="${(leftWidth - 10) * 10}">${leftLabel}</text>
-    <text x="${(leftWidth / 2) * 10}" y="140" transform="scale(.1)" fill="#F3F4F6" textLength="${(leftWidth - 10) * 10}">${leftLabel}</text>
-    <text aria-hidden="true" x="${(leftWidth + rightWidth / 2) * 10}" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="${(rightWidth - 10) * 10}">${rightText}</text>
-    <text x="${(leftWidth + rightWidth / 2) * 10}" y="140" transform="scale(.1)" fill="#FFFFFF" font-weight="bold" textLength="${(rightWidth - 10) * 10}">${rightText}</text>
+    <text aria-hidden="true" x="${(leftWidth / 2) * 10}" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="${(leftWidth - 10) * 10}">${safeLabel}</text>
+    <text x="${(leftWidth / 2) * 10}" y="140" transform="scale(.1)" fill="#F3F4F6" textLength="${(leftWidth - 10) * 10}">${safeLabel}</text>
+    <text aria-hidden="true" x="${(leftWidth + rightWidth / 2) * 10}" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="${(rightWidth - 10) * 10}">${safeText}</text>
+    <text x="${(leftWidth + rightWidth / 2) * 10}" y="140" transform="scale(.1)" fill="#FFFFFF" font-weight="bold" textLength="${(rightWidth - 10) * 10}">${safeText}</text>
   </g>
 </svg>
 `.trim();
@@ -112,7 +117,7 @@ export async function GET(request: NextRequest, { params }: BadgeRouteProps) {
         'Cache-Control': 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=43200',
       },
     });
-  } catch (error: any) {
+  } catch {
     const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="90" height="20"><rect width="90" height="20" fill="#E11D48"/><text x="45" y="14" fill="#fff" font-family="sans-serif" font-size="11" text-anchor="middle">error</text></svg>`;
     return new NextResponse(fallbackSvg, {
       status: 500,

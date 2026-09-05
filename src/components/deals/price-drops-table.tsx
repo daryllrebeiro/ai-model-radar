@@ -8,7 +8,7 @@ import {
   formatRelativeTime,
   formatExactDate,
 } from '@/lib/utils';
-import { TrendingDown, ChevronRight, Cpu } from 'lucide-react';
+import { TrendingDown, ChevronRight } from 'lucide-react';
 
 interface PriceDropsTableProps {
   drops7d: PriceDropDeal[];

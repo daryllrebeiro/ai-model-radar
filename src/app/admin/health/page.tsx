@@ -1,4 +1,5 @@
 import React from 'react';
+import { headers } from 'next/headers';
 import { getLatestIngestionRuns, getMarketStats } from '@/lib/db/queries';
 import { isPostgres } from '@/lib/db/client';
 import {
@@ -9,7 +10,6 @@ import {
   Database,
   Lock,
   Clock,
-  ShieldCheck,
   Server,
   Layers,
 } from 'lucide-react';
@@ -17,15 +17,34 @@ import { formatRelativeTime } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
-interface PageProps {
-  searchParams: { secret?: string };
-}
-
-export default async function AdminHealthPage({ searchParams }: PageProps) {
+export default async function AdminHealthPage() {
   const adminSecret = process.env.ADMIN_SECRET;
 
-  // If ADMIN_SECRET is configured, require match via query param
-  if (adminSecret && searchParams.secret !== adminSecret) {
+  if (!adminSecret) {
+    return (
+      <div className="max-w-md mx-auto my-20 p-8 rounded-2xl border border-gray-800 bg-[#111827]/90 text-center space-y-4">
+        <div className="w-12 h-12 rounded-full bg-rose-950/80 border border-rose-800/80 flex items-center justify-center mx-auto text-rose-400">
+          <Lock className="w-6 h-6" />
+        </div>
+        <h1 className="text-xl font-bold text-white tracking-tight">
+          Admin Not Configured
+        </h1>
+        <p className="text-xs text-gray-400">
+          ADMIN_SECRET environment variable is not set. Admin dashboard is unavailable.
+        </p>
+      </div>
+    );
+  }
+
+  const headersList = await headers();
+  const authHeader = headersList.get('authorization');
+  const secretHeader = headersList.get('x-admin-secret');
+
+  const isAuthorized =
+    authHeader === `Bearer ${adminSecret}` ||
+    secretHeader === adminSecret;
+
+  if (!isAuthorized) {
     return (
       <div className="max-w-md mx-auto my-20 p-8 rounded-2xl border border-gray-800 bg-[#111827]/90 text-center space-y-4">
         <div className="w-12 h-12 rounded-full bg-rose-950/80 border border-rose-800/80 flex items-center justify-center mx-auto text-rose-400">
@@ -35,23 +54,8 @@ export default async function AdminHealthPage({ searchParams }: PageProps) {
           Admin Authentication Required
         </h1>
         <p className="text-xs text-gray-400">
-          This internal pipeline health monitor is protected by <code className="text-cyan-400">ADMIN_SECRET</code>. Please pass the secret in the URL query parameter or authenticate via bearer token.
+          This internal pipeline health monitor is protected by <code className="text-cyan-400">ADMIN_SECRET</code>. Authenticate via <code className="text-cyan-400">Authorization: Bearer &lt;secret&gt;</code> or <code className="text-cyan-400">X-Admin-Secret</code> header.
         </p>
-        <form method="GET" className="pt-2 space-y-3">
-          <input
-            type="password"
-            name="secret"
-            placeholder="Enter ADMIN_SECRET..."
-            className="w-full px-3 py-2 bg-gray-900 border border-gray-800 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 font-mono"
-            required
-          />
-          <button
-            type="submit"
-            className="w-full py-2 px-4 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold uppercase tracking-wider transition-colors"
-          >
-            Access Dashboard
-          </button>
-        </form>
       </div>
     );
   }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth';
-import { deleteUserAccount, getUserByEmail, getUserById } from '@/lib/db/queries';
+import { deleteUserAccount, getUserById } from '@/lib/db/queries';
 import { cancelStripeSubscription } from '@/lib/billing/stripe';
 import { logger } from '@/lib/logger';
 
@@ -9,24 +9,16 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   try {
     const session = await getSessionUser(request);
-    let userId = session?.user?.id;
-    let email = session?.user?.email;
 
-    if (!userId) {
-      const body = await request.json().catch(() => ({}));
-      if (body.email) {
-        const user = await getUserByEmail(body.email);
-        userId = user?.id;
-        email = user?.email;
-      }
-    }
-
-    if (!userId) {
+    if (!session) {
       return NextResponse.json(
         { error: 'Authentication required to delete account' },
         { status: 401 }
       );
     }
+
+    const userId = session.user.id;
+    const email = session.user.email;
 
     // Retrieve user record to verify active Stripe subscriptions before deleting
     const targetUser = await getUserById(userId);
@@ -66,7 +58,7 @@ export async function POST(request: NextRequest) {
       message: 'Account, subscriptions, and all associated credentials, watchlists, and alert rules permanently purged.',
       deletedAt: new Date().toISOString(),
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: 'Failed to delete user account' }, { status: 500 });
   }
 }

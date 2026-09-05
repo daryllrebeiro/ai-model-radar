@@ -69,6 +69,6 @@ async function handleDigest(request: NextRequest) {
     });
   } catch (error: any) {
     logger.error(`Digest cron failure: ${error.message}`);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Digest generation failed' }, { status: 500 });
   }
 }

@@ -2,7 +2,7 @@ import React from 'react';
 import { getDealsData } from '@/lib/db/queries';
 import { FreeModelsGrid } from '@/components/deals/free-models-grid';
 import { PriceDropsTable } from '@/components/deals/price-drops-table';
-import { Tag, Sparkles } from 'lucide-react';
+import { Tag } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 

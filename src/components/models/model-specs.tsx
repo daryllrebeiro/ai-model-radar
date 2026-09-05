@@ -6,7 +6,7 @@ import {
   formatRelativeTime,
   formatExactDate,
 } from '@/lib/utils';
-import { Cpu, DollarSign, Maximize2, Layers, ExternalLink, Calendar } from 'lucide-react';
+import { DollarSign, Maximize2, Layers, ExternalLink, Calendar } from 'lucide-react';
 import { WatchButton } from '../watchlist/watch-button';
 
 interface ModelSpecsProps {

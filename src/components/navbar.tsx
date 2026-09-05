@@ -19,6 +19,7 @@ import {
   Rss,
   Star,
   Search,
+  CreditCard,
 } from 'lucide-react';
 import { useWatchlist } from './watchlist/watchlist-context';
 import { CommandSearchModal } from './CommandSearchModal';
@@ -52,6 +53,7 @@ export function Navbar() {
     { name: 'Community', href: '/community', icon: Users },
     { name: 'Alerts', href: '/alerts', icon: Bell },
     { name: 'API Docs', href: '/docs', icon: Code2 },
+    { name: 'Pricing', href: '/pricing', icon: CreditCard },
   ];
 
   return (

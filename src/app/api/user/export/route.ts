@@ -1,28 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth';
-import { exportUserData, getUserByEmail } from '@/lib/db/queries';
+import { exportUserData } from '@/lib/db/queries';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getSessionUser(request);
-    let userId = session?.user?.id;
 
-    if (!userId) {
-      const email = request.nextUrl.searchParams.get('email');
-      if (email) {
-        const user = await getUserByEmail(email);
-        userId = user?.id;
-      }
-    }
-
-    if (!userId) {
+    if (!session) {
       return NextResponse.json(
         { error: 'Authentication required to export account data' },
         { status: 401 }
       );
     }
+
+    const userId = session.user.id;
 
     const exportBundle = await exportUserData(userId);
     if (!exportBundle) {
@@ -34,7 +27,7 @@ export async function GET(request: NextRequest) {
         'Content-Disposition': `attachment; filename="ai-model-radar-data-export-${userId}.json"`,
       },
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: 'Failed to export user data' }, { status: 500 });
   }
 }

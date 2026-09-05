@@ -1,6 +1,4 @@
-import { HuggingFaceModel, CommunityEvent } from '@/types/community';
-
-const HF_API_URL = 'https://huggingface.co/api/models?sort=trendingScore&direction=-1&limit=50';
+import { HuggingFaceModel } from '@/types/community';
 
 /**
  * Fetches trending and new community models from Hugging Face's public API

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createCheckoutSession, BILLING_PLANS } from '@/lib/billing/stripe';
 import { getSessionUser } from '@/lib/auth';
 import { isBillingEnabled } from '@/lib/feature-flags';
+import { handleApiError } from '@/lib/api-error-handler';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { tier, customerEmail, successUrl, cancelUrl } = body;
+    const { tier, successUrl, cancelUrl } = body;
 
     if (!tier || !BILLING_PLANS[tier] || tier === 'free') {
       return NextResponse.json(
@@ -28,16 +29,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let email = customerEmail;
-    if (!email) {
-      const session = await getSessionUser(request);
-      email = session?.user.email;
-    }
+    const authSession = await getSessionUser(request);
+    const email = authSession?.user?.email;
 
     if (!email) {
       return NextResponse.json(
-        { error: 'customerEmail or authenticated user session is required.' },
-        { status: 400 }
+        { error: 'Authenticated session is required.' },
+        { status: 401 }
       );
     }
 
@@ -45,7 +43,7 @@ export async function POST(request: NextRequest) {
     const targetSuccessUrl = successUrl || `${origin}/alerts?upgrade=success`;
     const targetCancelUrl = cancelUrl || `${origin}/alerts?upgrade=cancelled`;
 
-    const session = await createCheckoutSession({
+    const checkoutSession = await createCheckoutSession({
       customerEmail: email,
       tier,
       successUrl: targetSuccessUrl,
@@ -54,14 +52,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      url: session.url,
-      sessionId: session.sessionId,
+      url: checkoutSession.url,
+      sessionId: checkoutSession.sessionId,
       tier,
     });
   } catch (error: any) {
-    return NextResponse.json(
-      { error: error.message || 'Failed to create checkout session' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'billing/checkout');
   }
 }

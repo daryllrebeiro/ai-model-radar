@@ -29,11 +29,11 @@ async function handlePrune(request: NextRequest) {
       daysToKeep: days,
       prunedSnapshotsCount: result.prunedCount,
     });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
       {
         success: false,
-        error: error.message || String(error),
+        error: 'Prune operation failed',
       },
       { status: 500 }
     );
