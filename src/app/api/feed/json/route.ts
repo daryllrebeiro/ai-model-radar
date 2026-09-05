@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getEvents } from '@/lib/db/queries';
 import { getEventSummary } from '@/lib/utils';
+import { baseUrl } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
     const { events } = await getEvents({ limit: 50 });
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://ai-model-radar.vercel.app';
+    const siteUrl = baseUrl();
 
     const feed = {
       version: 'https://jsonfeed.org/version/1.1',

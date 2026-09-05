@@ -27,9 +27,31 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? parseInt(val, 10) : 30)),
+  NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
+  FEATURE_ENFORCEMENT: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true'),
+  AUTH_SECRET: z.string().min(16).optional(),
+  UNSUBSCRIBE_SECRET: z.string().min(16).optional(),
+  OPENROUTER_API_URL: z.string().url().optional(),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
+
+/**
+ * Resolves the canonical public site URL from NEXT_PUBLIC_SITE_URL, falling back
+ * to env.output value, then the historical production default. In production the
+ * env schema requires NEXT_PUBLIC_SITE_URL, so the fallback only matters in dev.
+ */
+export function baseUrl(): string {
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_VERCEL_URL ||
+    process.env.NEXT_PUBLIC_URL ||
+    'https://ai-model-radar.com'
+  );
+}
 
 let hasWarnedGithubToken = false;
 
@@ -56,6 +78,24 @@ export function validateEnv(processEnv: Record<string, any> = process.env): {
 
   const env = result.data;
   const errors: string[] = [];
+
+  // Production-relevant secrets are validated loudly even though they are
+  // schema-optional (so local/dev boot is frictionless).
+  if (processEnv.NODE_ENV === 'production') {
+    if (!processEnv.AUTH_SECRET || String(processEnv.AUTH_SECRET).length < 16) {
+      errors.push(
+        'AUTH_SECRET is required in production (>= 16 chars). Generate with: openssl rand -base64 32'
+      );
+    }
+    if (!processEnv.DATABASE_URL) {
+      errors.push('DATABASE_URL is required in production for durable storage.');
+    }
+    if (!processEnv.NEXT_PUBLIC_SITE_URL) {
+      errors.push(
+        'NEXT_PUBLIC_SITE_URL is required in production (used for RSS feeds, badges, canonical links).'
+      );
+    }
+  }
 
   // Conditional validation when Stripe billing is enabled
   if (processEnv.STRIPE_ENABLED === 'true') {

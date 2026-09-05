@@ -4,7 +4,7 @@ import path from 'path';
 export default defineConfig({
   test: {
     globals: true,
-    fileParallelism: false, // Run test suites sequentially to prevent local JSON file state contention
+    fileParallelism: false, // Required for local JSON fallback mode (no DATABASE_URL)
   },
   resolve: {
     alias: {

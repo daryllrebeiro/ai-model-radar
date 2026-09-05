@@ -1,28 +1,35 @@
 import { NextResponse } from 'next/server';
 import { getEvents } from '@/lib/db/queries';
 import { getEventSummary } from '@/lib/utils';
+import { escapeXml } from '@/lib/sanitize';
+import { baseUrl } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
     const { events } = await getEvents({ limit: 50 });
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://ai-model-radar.vercel.app';
+    const siteUrl = baseUrl();
 
     const itemsXml = events
       .map((e) => {
         const summary = getEventSummary(e);
         const link = `${siteUrl}/models/${encodeURIComponent(e.model_id)}`;
         const pubDate = new Date(e.detected_at).toUTCString();
+        const safeGuid = escapeXml(`${e.model_id}-${e.detected_at}`);
+        const safeCategory = escapeXml(e.event_type);
+        const safeSubtitle = escapeXml(summary.subtitle);
+        const safeEventType = escapeXml(e.event_type);
+        const safeProvider = escapeXml(e.provider || 'OpenRouter');
 
         return `
     <item>
       <title><![CDATA[${summary.title}]]></title>
       <link>${link}</link>
-      <guid isPermaLink="false">${e.model_id}-${e.detected_at}</guid>
+      <guid isPermaLink="false">${safeGuid}</guid>
       <pubDate>${pubDate}</pubDate>
-      <description><![CDATA[${summary.subtitle} | Event: ${e.event_type} | Provider: ${e.provider || 'OpenRouter'}]]></description>
-      <category>${e.event_type}</category>
+      <description><![CDATA[${safeSubtitle} | Event: ${safeEventType} | Provider: ${safeProvider}]]></description>
+      <category>${safeCategory}</category>
     </item>`;
       })
       .join('');
