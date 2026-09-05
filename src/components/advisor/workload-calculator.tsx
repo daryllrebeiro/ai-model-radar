@@ -4,7 +4,12 @@ import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { ModelSnapshot } from '@/types/models';
 import { WorkloadProfile, WorkloadTaskType } from '@/types/advisor';
+import { AccessTier } from '@/lib/feature-flags';
 import { calculateStackAdvice } from '@/lib/advisor';
+import {
+  CostScenario,
+  normalizeScenario,
+} from '@/lib/cost-model';
 import {
   formatPricePerMillion,
   formatContextLength,
@@ -12,36 +17,50 @@ import {
 import {
   Sparkles,
   TrendingDown,
-  Gift,
-  DollarSign,
-  Cpu,
-  Layers,
   ArrowRight,
-  ShieldCheck,
   CheckCircle2,
+  Gauge,
 } from 'lucide-react';
 import { WatchButton } from '../watchlist/watch-button';
+import { FeatureGate } from '../FeatureGate';
 
 interface WorkloadCalculatorProps {
   initialSnapshots: ModelSnapshot[];
+  featureTier?: AccessTier | string;
 }
 
-export function WorkloadCalculator({ initialSnapshots }: WorkloadCalculatorProps) {
+export function WorkloadCalculator({ initialSnapshots, featureTier = 'free' }: WorkloadCalculatorProps) {
   const [promptTokensM, setPromptTokensM] = useState<number>(50); // 50M
   const [compTokensM, setCompTokensM] = useState<number>(10); // 10M
   const [requiredContext, setRequiredContext] = useState<number>(64000);
   const [taskType, setTaskType] = useState<WorkloadTaskType>('coding');
+  const [cacheHitPct, setCacheHitPct] = useState<number>(0);
+  const [batchDiscountPct, setBatchDiscountPct] = useState<number>(0);
 
-  const workload: WorkloadProfile = {
-    monthlyPromptTokens: promptTokensM * 1_000_000,
-    monthlyCompTokens: compTokensM * 1_000_000,
-    requiredContext,
-    taskType,
-  };
+  const workload: WorkloadProfile = useMemo(
+    () => ({
+      monthlyPromptTokens: promptTokensM * 1_000_000,
+      monthlyCompTokens: compTokensM * 1_000_000,
+      requiredContext,
+      taskType,
+    }),
+    [promptTokensM, compTokensM, requiredContext, taskType]
+  );
+
+  const scenario: CostScenario = useMemo(
+    () =>
+      normalizeScenario({
+        cacheHitRatio: cacheHitPct / 100,
+        batchDiscount: batchDiscountPct / 100,
+      }),
+    [cacheHitPct, batchDiscountPct]
+  );
+
+  const isOptimizerActive = cacheHitPct > 0 || batchDiscountPct > 0;
 
   const advice = useMemo(() => {
-    return calculateStackAdvice(workload, initialSnapshots);
-  }, [workload, initialSnapshots]);
+    return calculateStackAdvice(workload, initialSnapshots, scenario);
+  }, [workload, initialSnapshots, scenario]);
 
   const taskOptions: Array<{ id: WorkloadTaskType; label: string; desc: string }> = [
     { id: 'coding', label: 'Software & Agentic Coding', desc: 'Prioritizes SWE-bench and HumanEval capabilities' },
@@ -148,6 +167,71 @@ export function WorkloadCalculator({ initialSnapshots }: WorkloadCalculatorProps
             </span>
           </div>
         </div>
+
+        {/* Cost Optimizer (Pro): cache-hit & batch-discount modeling */}
+        <FeatureGate feature="COST_OPTIMIZER" userTier={featureTier}>
+          <div className="pt-4 border-t border-gray-800">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-mono text-gray-300 uppercase font-semibold flex items-center gap-1.5">
+                <Gauge className="w-3.5 h-3.5 text-cyan-400" />
+                Cost Optimizer — Effective Pricing
+              </span>
+              {isOptimizerActive && (
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-300">
+                  OPTIMIZER ACTIVE
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Prompt Cache Hit Ratio */}
+              <div>
+                <div className="flex justify-between text-xs font-mono text-gray-300 mb-1">
+                  <span>Prompt Cache Hit Ratio</span>
+                  <span className="font-bold text-cyan-400">{cacheHitPct}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={cacheHitPct}
+                  onChange={(e) => setCacheHitPct(Number(e.target.value))}
+                  className="w-full accent-cyan-500"
+                />
+                <span className="text-[11px] text-gray-500 font-mono">
+                  Cached input tokens billed at ~10% on most providers. High for RAG / agent frameworks.
+                </span>
+              </div>
+
+              {/* Batch Discount */}
+              <div>
+                <div className="flex justify-between text-xs font-mono text-gray-300 mb-1">
+                  <span>Batch API Discount</span>
+                  <span className="font-bold text-emerald-400">{batchDiscountPct}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="50"
+                  step="5"
+                  value={batchDiscountPct}
+                  onChange={(e) => setBatchDiscountPct(Number(e.target.value))}
+                  className="w-full accent-emerald-500"
+                />
+                <span className="text-[11px] text-gray-500 font-mono">
+                  Up to 50% off via async batch endpoints (Anthropic / OpenAI / DeepSeek).
+                </span>
+              </div>
+            </div>
+            {isOptimizerActive && advice.effectiveMaxAnnualSavingsUsd !== undefined && (
+              <p className="text-[11px] font-mono text-emerald-400 mt-3">
+                Effective annual savings under this scenario:{' '}
+                <strong>${advice.effectiveMaxAnnualSavingsUsd.toLocaleString()} / yr</strong>
+                <span className="text-gray-500"> (projected with ±{Math.round((scenario.confidenceBand + (scenario.cacheHitRatio + scenario.batchDiscount) * 0.1) * 100)}% confidence band)</span>
+              </p>
+            )}
+          </div>
+        </FeatureGate>
       </div>
 
       {/* Savings Summary Banner */}
@@ -217,14 +301,36 @@ export function WorkloadCalculator({ initialSnapshots }: WorkloadCalculatorProps
                       ${rec.monthly_cost_usd.toLocaleString()}
                     </span>
                   </div>
+                  {isOptimizerActive && rec.effective_monthly_cost_usd !== undefined && (
+                    <>
+                      <div className="flex items-baseline justify-between text-xs text-emerald-400 font-bold pt-1 border-t border-gray-900">
+                        <span>Effective (Cache + Batch):</span>
+                        <span>${rec.effective_monthly_cost_usd.toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-baseline justify-between text-[11px] text-gray-500 pt-1">
+                        <span>Projected range (±15%):</span>
+                        <span>
+                          ${rec.monthly_cost_range_low?.toLocaleString()} – ${rec.monthly_cost_range_high?.toLocaleString()}
+                        </span>
+                      </div>
+                    </>
+                  )}
                   <div className="flex items-baseline justify-between text-xs text-gray-400 pt-1 border-t border-gray-900">
                     <span>Annual Cost:</span>
-                    <span>${rec.annual_cost_usd.toLocaleString()} / yr</span>
+                    <span>
+                      {isOptimizerActive && rec.effective_annual_cost_usd !== undefined
+                        ? `$${rec.effective_annual_cost_usd.toLocaleString()} / yr`
+                        : `$${rec.annual_cost_usd.toLocaleString()} / yr`}
+                    </span>
                   </div>
                   {rec.annual_savings_vs_premium > 0 && (
                     <div className="flex items-baseline justify-between text-xs text-emerald-400 font-bold pt-1 border-t border-gray-900">
                       <span>Annual Savings:</span>
-                      <span>+${rec.annual_savings_vs_premium.toLocaleString()}</span>
+                      <span>
+                        {isOptimizerActive && rec.effective_annual_savings_vs_premium !== undefined
+                          ? `+$${rec.effective_annual_savings_vs_premium.toLocaleString()}`
+                          : `+$${rec.annual_savings_vs_premium.toLocaleString()}`}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -233,11 +339,19 @@ export function WorkloadCalculator({ initialSnapshots }: WorkloadCalculatorProps
                 <div className="grid grid-cols-2 gap-2 text-xs font-mono text-gray-300">
                   <div className="p-2 rounded bg-gray-900/60 border border-gray-800">
                     <span className="text-[10px] text-gray-500 block">Prompt Rate</span>
-                    <span className="font-bold text-cyan-400">{formatPricePerMillion(rec.prompt_per_1m / 1_000_000)}</span>
+                    <span className="font-bold text-cyan-400">
+                      {isOptimizerActive && rec.effective_prompt_per_1m !== undefined
+                        ? `$${rec.effective_prompt_per_1m.toFixed(3)} / 1M`
+                        : formatPricePerMillion(rec.prompt_per_1m / 1_000_000)}
+                    </span>
                   </div>
                   <div className="p-2 rounded bg-gray-900/60 border border-gray-800">
                     <span className="text-[10px] text-gray-500 block">Completion Rate</span>
-                    <span className="font-bold text-emerald-400">{formatPricePerMillion(rec.comp_per_1m / 1_000_000)}</span>
+                    <span className="font-bold text-emerald-400">
+                      {isOptimizerActive && rec.effective_comp_per_1m !== undefined
+                        ? `$${rec.effective_comp_per_1m.toFixed(3)} / 1M`
+                        : formatPricePerMillion(rec.comp_per_1m / 1_000_000)}
+                    </span>
                   </div>
                 </div>
 

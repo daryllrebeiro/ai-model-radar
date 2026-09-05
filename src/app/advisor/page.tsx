@@ -1,13 +1,15 @@
 import React from 'react';
 import { getLatestSnapshotsMap } from '@/lib/db/queries';
+import { getPageFeatureTier } from '@/lib/access-guard';
 import { WorkloadCalculator } from '@/components/advisor/workload-calculator';
-import { Calculator, Sparkles } from 'lucide-react';
+import { Calculator } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdvisorPage() {
   const snapshotsMap = await getLatestSnapshotsMap();
   const snapshots = Array.from(snapshotsMap.values());
+  const featureTier = await getPageFeatureTier();
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -27,7 +29,7 @@ export default async function AdvisorPage() {
 
       {/* Interactive Calculator */}
       <section>
-        <WorkloadCalculator initialSnapshots={snapshots} />
+        <WorkloadCalculator initialSnapshots={snapshots} featureTier={featureTier} />
       </section>
     </div>
   );
