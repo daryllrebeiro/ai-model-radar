@@ -24,11 +24,9 @@ describe('Phase P8 / Closeout Ticket: GDPR Compliance & Stripe Subscription Canc
     const email = `gdpr_export_${Date.now()}@test.com`;
     const user = await createOrGetUser({ email, tier: 'developer' });
 
-    // Generate an API key for this user
     const { keyRecord } = generateApiKey(email, 'developer');
     await createApiKey(keyRecord);
 
-    // Pin models to watchlist
     await addToWatchlist(user.id, 'anthropic/claude-3.5-sonnet');
     await addToWatchlist(user.id, 'deepseek/deepseek-r1');
 
@@ -50,20 +48,31 @@ describe('Phase P8 / Closeout Ticket: GDPR Compliance & Stripe Subscription Canc
     await createApiKey(keyRecord);
     await addToWatchlist(user.id, 'meta-llama/llama-3.3-70b-instruct');
 
-    // Verify presence
     let exportData = await exportUserData(user.id);
     expect(exportData).not.toBeNull();
 
-    // Execute deletion
     const deleted = await deleteUserAccount(user.id);
     expect(deleted).toBe(true);
 
-    // Verify complete purging
     exportData = await exportUserData(user.id);
     expect(exportData).toBeNull();
   });
 
-  it('3. User with active Stripe subscription cancels in Stripe prior to local purge', async () => {
+  it('3. Delete route rejects unauthenticated requests with 401', async () => {
+    const req = new NextRequest('http://localhost:3000/api/user/delete', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'anyone@test.com' }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const res = await deleteUserRoute(req);
+    expect(res.status).toBe(401);
+
+    const body = await res.json();
+    expect(body.error).toContain('Authentication required');
+  });
+
+  it('4. Delete route authenticates via API key and processes deletion', async () => {
     const email = `stripe_sub_user_${Date.now()}@test.com`;
     const user = await createOrGetUser({
       email,
@@ -71,10 +80,16 @@ describe('Phase P8 / Closeout Ticket: GDPR Compliance & Stripe Subscription Canc
       stripe_customer_id: 'cus_test_12345',
     });
 
+    const { plaintextKey, keyRecord } = generateApiKey(email, 'developer');
+    await createApiKey(keyRecord);
+
     const req = new NextRequest('http://localhost:3000/api/user/delete', {
       method: 'POST',
-      body: JSON.stringify({ email: user.email }),
-      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${plaintextKey}`,
+      },
     });
 
     const res = await deleteUserRoute(req);
@@ -83,19 +98,24 @@ describe('Phase P8 / Closeout Ticket: GDPR Compliance & Stripe Subscription Canc
     const body = await res.json();
     expect(body.success).toBe(true);
 
-    // Confirm local account purged
     const check = await getUserById(user.id);
     expect(check).toBeNull();
   });
 
-  it('4. User with NO subscription deletes cleanly without error', async () => {
+  it('5. User with NO Stripe subscription deletes cleanly via API key auth', async () => {
     const email = `no_stripe_user_${Date.now()}@test.com`;
     const user = await createOrGetUser({ email, tier: 'free' });
 
+    const { plaintextKey, keyRecord } = generateApiKey(email, 'free');
+    await createApiKey(keyRecord);
+
     const req = new NextRequest('http://localhost:3000/api/user/delete', {
       method: 'POST',
-      body: JSON.stringify({ email: user.email }),
-      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${plaintextKey}`,
+      },
     });
 
     const res = await deleteUserRoute(req);
@@ -105,7 +125,7 @@ describe('Phase P8 / Closeout Ticket: GDPR Compliance & Stripe Subscription Canc
     expect(check).toBeNull();
   });
 
-  it('5. Simulated Stripe cancellation failure blocks deletion and preserves user account', async () => {
+  it('6. Simulated Stripe cancellation failure blocks deletion and preserves user account', async () => {
     (globalThis as any).__SIMULATE_STRIPE_CANCEL_FAILURE = true;
 
     const email = `stripe_fail_user_${Date.now()}@test.com`;
@@ -115,10 +135,16 @@ describe('Phase P8 / Closeout Ticket: GDPR Compliance & Stripe Subscription Canc
       stripe_customer_id: 'cus_test_fail_999',
     });
 
+    const { plaintextKey, keyRecord } = generateApiKey(email, 'developer');
+    await createApiKey(keyRecord);
+
     const req = new NextRequest('http://localhost:3000/api/user/delete', {
       method: 'POST',
-      body: JSON.stringify({ email: user.email }),
-      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${plaintextKey}`,
+      },
     });
 
     const res = await deleteUserRoute(req);
@@ -127,7 +153,6 @@ describe('Phase P8 / Closeout Ticket: GDPR Compliance & Stripe Subscription Canc
     const body = await res.json();
     expect(body.error).toContain('Failed to cancel active Stripe subscription');
 
-    // Confirm user record is preserved
     const check = await getUserById(user.id);
     expect(check).not.toBeNull();
     expect(check?.email).toBe(email);

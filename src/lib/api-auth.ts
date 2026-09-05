@@ -134,7 +134,7 @@ export class UpstashRedisRateLimiter implements IRateLimiter {
         await this.fetchFn(`${this.url}/del/ratelimit:${identifier}:*`, {
           headers: { Authorization: `Bearer ${this.token}` },
         });
-      } catch (err) {
+      } catch {
         // ignore reset error
       }
     }

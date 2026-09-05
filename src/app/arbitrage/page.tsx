@@ -1,9 +1,9 @@
 import React from 'react';
 import Link from 'next/link';
 import { getLatestSnapshotsMap } from '@/lib/db/queries';
-import { computeArbitrageOpportunities, ArbitrageCluster } from '@/lib/arbitrage';
+import { computeArbitrageOpportunities } from '@/lib/arbitrage';
 import { formatPricePerMillion, formatContextLength } from '@/lib/utils';
-import { Scale, TrendingDown, ArrowRight, ShieldCheck, ChevronRight, Zap } from 'lucide-react';
+import { Scale, TrendingDown, ChevronRight, Zap } from 'lucide-react';
 import { WatchButton } from '@/components/watchlist/watch-button';
 
 export const dynamic = 'force-dynamic';
@@ -102,7 +102,7 @@ export default async function ArbitragePage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-800/60">
-                    {cluster.all_options.map((opt, idx) => {
+                    {cluster.all_options.map((opt) => {
                       const isCheapest = opt.model_id === cluster.cheapest_option.model_id;
                       const isExpensive = opt.model_id === cluster.expensive_option.model_id && cluster.all_options.length > 1;
 
