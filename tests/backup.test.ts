@@ -40,6 +40,11 @@ describe('Phase P9: Automated Database Backup, Restore & Escalation Alerts', () 
     await expect(
       restoreDatabase(backupFilePath, '0000000000000000000000000000000000000000000000000000000000000000')
     ).rejects.toThrowError(/Integrity verification failed/);
+
+    // Rejects restore without checksum (mandatory)
+    await expect(
+      restoreDatabase(backupFilePath, '')
+    ).rejects.toThrowError(/Checksum verification is mandatory/);
   });
 
   it('3. Formats and triggers paging escalation alerts for production incidents', async () => {

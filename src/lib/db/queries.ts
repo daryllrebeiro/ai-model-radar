@@ -1,5 +1,6 @@
 import { ModelSnapshot, ModelCurrent } from '@/types/models';
 import { ModelEvent, EventFilterParams, MarketStats, PriceDropDeal } from '@/types/events';
+import { Team, TeamMember, TeamRole, TeamDetail } from '@/types/teams';
 import { isPostgres, getPgPool, getLocalState, saveLocalState } from './client';
 import { extractProvider } from '../utils';
 import { encodeCursor, decodeCursor } from '../pagination';
@@ -487,6 +488,100 @@ export async function getModelDetail(modelId: string): Promise<{
     snapshots,
     events,
   };
+}
+
+export type HistoryRange = '7d' | '30d' | '90d' | '1y' | 'all';
+
+export const HISTORY_RANGE_MS: Record<HistoryRange, number | null> = {
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+  '90d': 90 * 24 * 60 * 60 * 1000,
+  '1y': 365 * 24 * 60 * 60 * 1000,
+  all: null,
+};
+
+export function isHistoryRange(value: string | null | undefined): value is HistoryRange {
+  return !!value && value in HISTORY_RANGE_MS;
+}
+
+/**
+ * Returns time-series snapshots and event annotations for the price history chart.
+ * Filters both by an optional look-back window (7d/30d/90d/1y/all).
+ */
+export async function getModelPriceHistory(
+  modelId: string,
+  range: HistoryRange = 'all'
+): Promise<{
+  current: ModelSnapshot | null;
+  snapshots: ModelSnapshot[];
+  events: ModelEvent[];
+} | null> {
+  const cutoffMs = HISTORY_RANGE_MS[range];
+  let snapshots: ModelSnapshot[] = [];
+  let events: ModelEvent[] = [];
+
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const sQuery = cutoffMs !== null
+      ? `SELECT * FROM model_snapshots WHERE model_id = $1 AND polled_at >= NOW() - interval '1 ${range}' ORDER BY polled_at ASC`
+      : `SELECT * FROM model_snapshots WHERE model_id = $1 ORDER BY polled_at ASC`;
+    const sRes = await pool.query(sQuery, [modelId]);
+    snapshots = sRes.rows.map((r: any) => ({
+      id: Number(r.id),
+      model_id: r.model_id,
+      provider: r.provider,
+      name: r.name,
+      price_prompt: r.price_prompt !== null ? Number(r.price_prompt) : null,
+      price_completion: r.price_completion !== null ? Number(r.price_completion) : null,
+      context_length: r.context_length !== null ? Number(r.context_length) : null,
+      modality: r.modality,
+      is_free: Boolean(r.is_free),
+      raw_json: typeof r.raw_json === 'string' ? JSON.parse(r.raw_json) : r.raw_json,
+      polled_at: r.polled_at,
+    }));
+
+    const eQuery = cutoffMs !== null
+      ? `SELECT * FROM model_events WHERE model_id = $1 AND detected_at >= NOW() - interval '1 ${range}' ORDER BY detected_at DESC`
+      : `SELECT * FROM model_events WHERE model_id = $1 ORDER BY detected_at DESC`;
+    const eRes = await pool.query(eQuery, [modelId]);
+    events = eRes.rows.map((r: any) => ({
+      id: Number(r.id),
+      model_id: r.model_id,
+      event_type: r.event_type,
+      old_value: typeof r.old_value === 'string' ? JSON.parse(r.old_value) : r.old_value,
+      new_value: typeof r.new_value === 'string' ? JSON.parse(r.new_value) : r.new_value,
+      pct_change: r.pct_change !== null ? Number(r.pct_change) : null,
+      source: r.source,
+      detected_at: r.detected_at,
+      model_name: snapshots[snapshots.length - 1]?.name || modelId,
+      provider: snapshots[snapshots.length - 1]?.provider || extractProvider(modelId),
+    }));
+  } else {
+    const state = getLocalState();
+    const cutoff = cutoffMs !== null ? Date.now() - cutoffMs : null;
+    snapshots = state.snapshots
+      .filter((s) => s.model_id === modelId)
+      .filter((s) => (cutoff === null ? true : new Date(s.polled_at).getTime() >= cutoff))
+      .sort((a, b) => new Date(a.polled_at).getTime() - new Date(b.polled_at).getTime());
+
+    events = state.events
+      .filter((e) => e.model_id === modelId)
+      .filter((e) => (cutoff === null ? true : new Date(e.detected_at).getTime() >= cutoff))
+      .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime())
+      .map((e) => ({
+        ...e,
+        model_name: snapshots[snapshots.length - 1]?.name || modelId,
+        provider: snapshots[snapshots.length - 1]?.provider || extractProvider(modelId),
+      }));
+  }
+
+  if (snapshots.length === 0 && events.length === 0) {
+    return null;
+  }
+
+  const current = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
+
+  return { current, snapshots, events };
 }
 
 /**
@@ -1299,9 +1394,371 @@ export async function deleteUserAccount(userId: number): Promise<boolean> {
     if (state.user_watchlists) {
       state.user_watchlists = state.user_watchlists.filter((w: any) => w.user_id !== userId);
     }
+    if (state.teams) {
+      const ownedTeamIds = new Set(
+        (state.teams as any[])
+          .filter((t: any) => t.owner_email === email)
+          .map((t: any) => t.id)
+      );
+      (state.teams as any[]) = (state.teams as any[]).filter((t: any) => t.owner_email !== email);
+      if (state.team_watchlists) {
+        (state as any).team_watchlists = (state as any).team_watchlists.filter(
+          (w: any) => !ownedTeamIds.has(w.team_id)
+        );
+      }
+      if (state.team_members) {
+        (state as any).team_members = (state as any).team_members.filter(
+          (m: any) => m.member_email !== email && !ownedTeamIds.has(m.team_id)
+        );
+      }
+    }
     saveLocalState(state);
     return true;
   }
+}
+
+// ─── TEAM WORKSPACES (Enterprise) ───────────────────────────────────────
+
+function slugify(name: string): string {
+  const base = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100);
+  return base || `team-${Date.now().toString(36)}`;
+}
+
+/**
+ * Creates a team and adds the owner as an admin member.
+ */
+export async function createTeam(name: string, ownerEmail: string): Promise<Team> {
+  const slug = slugify(name);
+  const now = new Date().toISOString();
+
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const inserted = await pool.query(
+      `INSERT INTO teams (name, slug, owner_email, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING *`,
+      [name, slug, ownerEmail]
+    );
+    const team = inserted.rows[0];
+    await pool.query(
+      `INSERT INTO team_members (team_id, member_email, role, created_at)
+       VALUES ($1, $2, 'admin', NOW())
+       ON CONFLICT (team_id, member_email) DO NOTHING`,
+      [team.id, ownerEmail]
+    );
+    return team;
+  } else {
+    const state = getLocalState();
+    if (!state.teams) state.teams = [];
+    const team: Team = {
+      id: state.teams.length + 1,
+      name,
+      slug,
+      owner_email: ownerEmail,
+      created_at: now,
+    };
+    state.teams.push(team);
+    if (!state.team_members) state.team_members = [];
+    state.team_members.push({
+      id: state.team_members.length + 1,
+      team_id: team.id,
+      member_email: ownerEmail,
+      role: 'admin',
+      created_at: now,
+    });
+    saveLocalState(state);
+    return team;
+  }
+}
+
+/**
+ * Lists teams the user can access (as owner or member).
+ */
+export async function getTeamsForUser(email: string): Promise<Team[]> {
+  const normalized = email.toLowerCase().trim();
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT DISTINCT t.*
+       FROM teams t
+       LEFT JOIN team_members m ON m.team_id = t.id AND m.member_email = $1
+       WHERE t.owner_email = $1 OR m.member_email = $1
+       ORDER BY t.created_at DESC`,
+      [normalized]
+    );
+    return res.rows;
+  } else {
+    const state = getLocalState();
+    const memberTeamIds = new Set(
+      (state.team_members || [])
+        .filter((m: any) => m.member_email === normalized)
+        .map((m: any) => m.team_id)
+    );
+    return (state.teams || []).filter(
+      (t: any) => t.owner_email === normalized || memberTeamIds.has(t.id)
+    );
+  }
+}
+
+/**
+ * Gets a single team by id.
+ */
+export async function getTeam(teamId: number): Promise<Team | null> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(`SELECT * FROM teams WHERE id = $1`, [teamId]);
+    return res.rows[0] || null;
+  } else {
+    const state = getLocalState();
+    return (state.teams || []).find((t: any) => t.id === teamId) || null;
+  }
+}
+
+/**
+ * Resolves the caller's role within a team, or null when not a member.
+ */
+export async function getTeamRole(teamId: number, email: string): Promise<TeamRole | null> {
+  const normalized = email.toLowerCase().trim();
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT role FROM team_members WHERE team_id = $1 AND member_email = $2`,
+      [teamId, normalized]
+    );
+    if (res.rows.length > 0) return res.rows[0].role as TeamRole;
+  } else {
+    const state = getLocalState();
+    const member = (state.team_members || []).find(
+      (m: any) => m.team_id === teamId && m.member_email === normalized
+    );
+    if (member) return member.role as TeamRole;
+  }
+  return null;
+}
+
+/**
+ * Adds (or re-activates) a member in a team workspace.
+ */
+export async function addTeamMember(
+  teamId: number,
+  memberEmail: string,
+  role: TeamRole = 'member'
+): Promise<TeamMember> {
+  const normalized = memberEmail.toLowerCase().trim();
+  const now = new Date().toISOString();
+
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const inserted = await pool.query(
+      `INSERT INTO team_members (team_id, member_email, role, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (team_id, member_email) DO UPDATE SET role = EXCLUDED.role
+       RETURNING *`,
+      [teamId, normalized, role]
+    );
+    return inserted.rows[0];
+  } else {
+    const state = getLocalState();
+    if (!state.team_members) state.team_members = [];
+    const existing = state.team_members.find(
+      (m: any) => m.team_id === teamId && m.member_email === normalized
+    );
+    if (existing) {
+      existing.role = role;
+      saveLocalState(state);
+      return existing;
+    }
+    const member: TeamMember = {
+      id: state.team_members.length + 1,
+      team_id: teamId,
+      member_email: normalized,
+      role,
+      created_at: now,
+    };
+    state.team_members.push(member);
+    saveLocalState(state);
+    return member;
+  }
+}
+
+/**
+ * Removes a member from a team workspace.
+ */
+export async function removeTeamMember(teamId: number, memberEmail: string): Promise<boolean> {
+  const normalized = memberEmail.toLowerCase().trim();
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `DELETE FROM team_members WHERE team_id = $1 AND member_email = $2`,
+      [teamId, normalized]
+    );
+    return (res.rowCount || 0) > 0;
+  } else {
+    const state = getLocalState();
+    const before = (state.team_members || []).length;
+    state.team_members = (state.team_members || []).filter(
+      (m: any) => !(m.team_id === teamId && m.member_email === normalized)
+    );
+    saveLocalState(state);
+    return state.team_members.length < before;
+  }
+}
+
+/**
+ * Lists members of a team.
+ */
+export async function getTeamMembers(teamId: number): Promise<TeamMember[]> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT * FROM team_members WHERE team_id = $1 ORDER BY created_at ASC`,
+      [teamId]
+    );
+    return res.rows;
+  } else {
+    const state = getLocalState();
+    return (state.team_members || [])
+      .filter((m: any) => m.team_id === teamId)
+      .sort((a: any, b: any) => a.created_at.localeCompare(b.created_at));
+  }
+}
+
+/**
+ * Renames a team (slug preserved).
+ */
+export async function renameTeam(teamId: number, newName: string): Promise<Team | null> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `UPDATE teams SET name = $1 WHERE id = $2 RETURNING *`,
+      [newName, teamId]
+    );
+    return res.rows[0] || null;
+  } else {
+    const state = getLocalState();
+    const team = (state.teams || []).find((t: any) => t.id === teamId);
+    if (team) {
+      team.name = newName;
+      saveLocalState(state);
+    }
+    return team || null;
+  }
+}
+
+/**
+ * Deletes a team and all cascaded members/shared watchlists.
+ */
+export async function deleteTeam(teamId: number): Promise<boolean> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(`DELETE FROM teams WHERE id = $1`, [teamId]);
+    return (res.rowCount || 0) > 0;
+  } else {
+    const state = getLocalState();
+    const before = (state.teams || []).length;
+    state.teams = (state.teams || []).filter((t: any) => t.id !== teamId);
+    state.team_members = (state.team_members || []).filter((m: any) => m.team_id !== teamId);
+    state.team_watchlists = (state.team_watchlists || []).filter((w: any) => w.team_id !== teamId);
+    saveLocalState(state);
+    return state.teams.length < before;
+  }
+}
+
+/**
+ * Fetches shared watchlist model IDs for a team.
+ */
+export async function getTeamWatchlist(teamId: number): Promise<string[]> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT model_id FROM team_watchlists WHERE team_id = $1 ORDER BY created_at DESC`,
+      [teamId]
+    );
+    return res.rows.map((r: any) => r.model_id);
+  } else {
+    const state = getLocalState();
+    return (state.team_watchlists || [])
+      .filter((w: any) => w.team_id === teamId)
+      .sort((a: any, b: any) => (b.created_at || '').localeCompare(a.created_at || ''))
+      .map((w: any) => w.model_id);
+  }
+}
+
+/**
+ * Adds a model to the team's shared watchlist.
+ */
+export async function addToTeamWatchlist(
+  teamId: number,
+  modelId: string,
+  addedByEmail: string
+): Promise<boolean> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    await pool.query(
+      `INSERT INTO team_watchlists (team_id, model_id, added_by_email, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (team_id, model_id) DO NOTHING`,
+      [teamId, modelId, addedByEmail]
+    );
+    return true;
+  } else {
+    const state = getLocalState();
+    if (!state.team_watchlists) state.team_watchlists = [];
+    const exists = state.team_watchlists.some(
+      (w: any) => w.team_id === teamId && w.model_id === modelId
+    );
+    if (!exists) {
+      state.team_watchlists.push({
+        id: state.team_watchlists.length + 1,
+        team_id: teamId,
+        model_id: modelId,
+        added_by_email: addedByEmail,
+        created_at: new Date().toISOString(),
+      });
+      saveLocalState(state);
+    }
+    return true;
+  }
+}
+
+/**
+ * Removes a model from the team's shared watchlist.
+ */
+export async function removeFromTeamWatchlist(teamId: number, modelId: string): Promise<boolean> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `DELETE FROM team_watchlists WHERE team_id = $1 AND model_id = $2`,
+      [teamId, modelId]
+    );
+    return (res.rowCount || 0) > 0;
+  } else {
+    const state = getLocalState();
+    const before = (state.team_watchlists || []).length;
+    state.team_watchlists = (state.team_watchlists || []).filter(
+      (w: any) => !(w.team_id === teamId && w.model_id === modelId)
+    );
+    saveLocalState(state);
+    return state.team_watchlists.length < before;
+  }
+}
+
+/**
+ * Full team detail: members + shared watchlist.
+ */
+export async function getTeamDetail(teamId: number): Promise<TeamDetail | null> {
+  const team = await getTeam(teamId);
+  if (!team) return null;
+  const [members, sharedWatchlist] = await Promise.all([
+    getTeamMembers(teamId),
+    getTeamWatchlist(teamId),
+  ]);
+  return { ...team, members, sharedWatchlist };
 }
 
 

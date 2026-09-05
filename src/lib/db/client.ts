@@ -1,4 +1,4 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
 
@@ -23,7 +23,7 @@ export function getPgPool(): Pool {
     pgPool = new Pool({
       connectionString,
       ssl: process.env.NODE_ENV === 'production' && !connectionString?.includes('localhost')
-        ? { rejectUnauthorized: false }
+        ? { rejectUnauthorized: process.env.PGSSL_ALLOW_SELF_SIGNED !== 'true' }
         : false,
       max: 10,
       idleTimeoutMillis: 30000,
@@ -41,6 +41,10 @@ interface LocalDbState {
   digest_deliveries: Array<any>;
   users: Array<any>;
   user_watchlists: Array<any>;
+  alert_rules: Array<any>;
+  teams: Array<any>;
+  team_members: Array<any>;
+  team_watchlists: Array<any>;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
@@ -55,6 +59,10 @@ function getLocalState(): LocalDbState {
       digest_deliveries: [],
       users: [],
       user_watchlists: [],
+      alert_rules: [],
+      teams: [],
+      team_members: [],
+      team_watchlists: [],
     };
     fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(initial, null, 2), 'utf-8');
     return initial;
@@ -70,6 +78,10 @@ function getLocalState(): LocalDbState {
       digest_deliveries: parsed.digest_deliveries || [],
       users: parsed.users || [],
       user_watchlists: parsed.user_watchlists || [],
+      alert_rules: parsed.alert_rules || [],
+      teams: parsed.teams || [],
+      team_members: parsed.team_members || [],
+      team_watchlists: parsed.team_watchlists || [],
     };
   } catch {
     return {
@@ -80,6 +92,10 @@ function getLocalState(): LocalDbState {
       digest_deliveries: [],
       users: [],
       user_watchlists: [],
+      alert_rules: [],
+      teams: [],
+      team_members: [],
+      team_watchlists: [],
     };
   }
 }

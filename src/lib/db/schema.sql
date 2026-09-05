@@ -79,8 +79,46 @@ CREATE TABLE IF NOT EXISTS digest_deliveries (
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_time ON digest_deliveries (delivered_at DESC);
 
--- 6. Current-state view for quick reads
-CREATE VIEW IF NOT EXISTS model_current AS
+-- 6. User Accounts, Stripe Subscriptions & Server-Side Watchlists
+CREATE TABLE IF NOT EXISTS users (
+    id                  SERIAL PRIMARY KEY,
+    email               VARCHAR(255) UNIQUE NOT NULL,
+    role                VARCHAR(50) NOT NULL DEFAULT 'user',
+    tier                VARCHAR(50) NOT NULL DEFAULT 'free',
+    stripe_customer_id  VARCHAR(255),
+    stripe_subscription_id VARCHAR(255),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id);
+
+CREATE TABLE IF NOT EXISTS user_watchlists (
+    id          SERIAL PRIMARY KEY,
+    user_id     INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    model_id    VARCHAR(255) NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, model_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_watchlists_user ON user_watchlists(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_watchlists_model ON user_watchlists(model_id);
+
+-- 7. Alert Rules for price-drop / change notifications
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id                  SERIAL PRIMARY KEY,
+    type                VARCHAR(50) NOT NULL DEFAULT 'webhook',
+    destination         TEXT NOT NULL,
+    active              BOOLEAN NOT NULL DEFAULT true,
+    min_price_drop_pct  NUMERIC(8, 2),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_rules_active ON alert_rules(active);
+
+-- 8. Current-state view for quick reads
+CREATE OR REPLACE VIEW model_current AS
 SELECT s.*
 FROM model_snapshots s
 INNER JOIN (
@@ -88,3 +126,37 @@ INNER JOIN (
     FROM model_snapshots
     GROUP BY model_id
 ) latest ON s.model_id = latest.model_id AND s.polled_at = latest.max_polled_at;
+
+-- 9. Team Workspaces (Enterprise) — collaborative shared watchlists
+CREATE TABLE IF NOT EXISTS teams (
+    id                  SERIAL PRIMARY KEY,
+    name                VARCHAR(120) NOT NULL,
+    slug                VARCHAR(120) UNIQUE NOT NULL,
+    owner_email         VARCHAR(255) NOT NULL REFERENCES users(email),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_teams_owner ON teams(owner_email);
+
+CREATE TABLE IF NOT EXISTS team_members (
+    id                  SERIAL PRIMARY KEY,
+    team_id             INT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    member_email        VARCHAR(255) NOT NULL,
+    role                VARCHAR(20) NOT NULL DEFAULT 'member',  -- 'admin' | 'member'
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, member_email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_email ON team_members(member_email);
+
+CREATE TABLE IF NOT EXISTS team_watchlists (
+    id                  SERIAL PRIMARY KEY,
+    team_id             INT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    model_id            VARCHAR(255) NOT NULL,
+    added_by_email      VARCHAR(255) NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, model_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_watchlists_team ON team_watchlists(team_id);

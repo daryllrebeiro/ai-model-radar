@@ -15,7 +15,7 @@ npm run db:backup
 ```
 
 ### Artifact Outputs (`backups/`)
-1. `backup-YYYY-MM-DDTHH-mm-ss.json`: Full serialized JSON dump of `model_snapshots`, `model_events`, `ingestion_runs`, `api_keys`, `users`, `user_watchlists`.
+1. `backup-YYYY-MM-DDTHH-mm-ss.json`: Full serialized JSON dump of `model_snapshots`, `model_events`, `ingestion_runs`, `api_keys`, `users`, `user_watchlists`, `alert_rules`, `digest_deliveries`, and `schema_migrations`.
 2. `manifest-YYYY-MM-DDTHH-mm-ss.json`: Metadata manifest recording row counts, timestamp, database engine, and SHA-256 integrity checksum.
 
 ---
@@ -32,8 +32,8 @@ npm run db:restore backups/backup-2026-08-25T12-00-00.json <expected_sha256_chec
 ### Step-by-Step Recovery Procedure
 1. **Isolate Ingestion**: Stop ingestion poll jobs or pause GitHub Actions cron schedules to avoid writes during restoration.
 2. **Verify Dump Checksum**: Compare computed SHA-256 of the backup file against the manifest before applying.
-3. **Execute Restore**: Run `npm run db:restore <dump-file>` inside the target environment.
+3. **Execute Restore**: Run `npm run db:restore <dump-file> <expected_sha256>` inside the target environment. The SHA-256 checksum argument is **mandatory** — restore will abort if omitted or mismatched.
 4. **Validate Integrity**:
-   - Query `/api/admin/health` with `ADMIN_SECRET` to verify total active model count.
+   - Query `/api/admin/health` with `Authorization: Bearer <ADMIN_SECRET>` header (not a query parameter) to verify total active model count.
    - Run integration tests: `npm test`.
 5. **Resume Traffic**: Re-enable cron polling schedules.
