@@ -104,7 +104,7 @@ Reuses stored history → near-zero new data cost, immediate dollar/foresight va
 - **Status**: ✅ COMPLETE — `src/lib/ask-answer.ts` retrieval engine (intent detection +
   `buildTruthIndex`/`validateAnswer` citation re-check), `POST /api/v1/ask` (gated ASK_RADAR),
   `/ask` chat UI with source citations, `src/lib/briefs.ts` market briefs wired into the digest
-  cron + email, `ask_radar` MCP tool, `ASK_RADAR` pro flag (inventory 41). 257 tests / 44 files,
+  cron + email, `ask_radar` MCP tool, `ASK_RADAR` pro flag (inventory 41). 279 tests / 47 files,
   build OK. Recorded in `PHASES_COMPLETED.md`.
 
 ---

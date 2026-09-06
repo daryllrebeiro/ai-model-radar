@@ -59,9 +59,27 @@ Conversational copilot over the full radar dataset with cited answers, plus sche
 
 ---
 
-**Validation reference:** 44 test files / 257 tests passing; `tsc --noEmit` clean for `src/`+`scripts/`
-(only the pre-existing advanced-alerts / my-stack / redis-rate-limit test-file drift); touched files pass
-`eslint`; `next build` green.
+**Validation reference:** 47 test files / 279 tests passing in **both** persistence modes
+(local JSON and real Postgres); `tsc --noEmit` clean for the whole repo including tests;
+`touched files pass eslint with zero errors repo-wide; `next build` green.
+
+## Phase 1 stabilization — top-5 highest-leverage items ✅ COMPLETE
+- Item 1 (P0 tier vocabulary): `normalizeTier()` canonical mapping at all auth boundaries,
+  monotonic stored-tier upgrades, versioned backfill (`migrations/007_*` + `scripts/backfill-tiers.ts`),
+  6-test enforcement matrix incl. the staging-equivalent `FEATURE_ENFORCEMENT=true` regression test.
+- Item 2 (P0 bounded reads): `getEvents` Postgres path rewritten to SQL-side predicates +
+  keyset pagination over a `model_current` join (no in-memory full-table pagination); 100k-row
+  benchmark on real Postgres: 2114ms/100k-rows/+63MB → 567ms/50-rows (3.7x). Also fixed a latent
+  PG-only `interval '1 7d'` syntax bug in price-history ranges found by dual-mode runs.
+- Item 3 (email injection): `escapeHtml` on every upstream-derived string in the digest
+  template + payload-injection test proving inert output.
+- Item 4 (secret timing): Edge-safe `secretsEqual()` helper applied to middleware, admin
+  surface, and all four cron routes; unit + route tests; grep-verified zero `===` secret
+  comparisons remain.
+- Item 5 (CI + drift): `.github/workflows/ci.yml` (typecheck, lint, tests in local **and**
+  Postgres-service modes, build); all 15 accepted `tsc` errors fixed; full-repo eslint zero
+  errors; gate verified to bite on a planted type error. Dual-mode runs additionally forced
+  governance FK-correct fixtures and unique team names in tests.
 
 ## Post-Phase 6 hardening (whole-roadmap Definition of Done)
 - Deploy surface (`vercel.json`): `/api/cron/poll` hourly, `/api/cron/probes` hourly (:15),

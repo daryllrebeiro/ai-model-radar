@@ -1,7 +1,7 @@
 # AI Model Radar - Architectural Review & Strategic Roadmap
 
 > Review scope: full repository (`src/`, `scripts/`, `vercel.json`, `package.json`,
-> `src/lib/db/schema.sql`, all 44 test files / 257 tests). Every claim below is anchored
+> `src/lib/db/schema.sql`, all 47 test files / 279 tests, in both persistence modes). Every claim below is anchored
 > to a file and line number. Grades reflect production-readiness, not effort —
 > this team ships fast and the core domain modeling is genuinely good.
 
@@ -13,8 +13,10 @@ domain core — append-only `model_snapshots` + derived `model_events`, plus pur
 engines for forecasts, signals, recommendations, probes, governance, and Q&A — is the right
 architecture for the problem. The system is demo-strong and mid-scale-safe today. It is **not**
 yet scale-safe: the read path loads entire tables into Node on hot routes, bulk writes are
-row-by-row, two tier vocabularies disagree in the auth layer, and there is no CI. None of this
+row-by-row inserts, two tier vocabularies disagreeing in the auth layer, and quality
+gated only by hand-run suites. None of this
 requires a rewrite. All of it requires a disciplined 4-week hardening pass before traffic grows.
+(Phase 1 of §5 has since been executed for the top-5 items — see `PHASES_COMPLETED.md`.)
 
 ### Overall System Maturity
 
@@ -24,7 +26,7 @@ requires a rewrite. All of it requires a disciplined 4-week hardening pass befor
 | Code Quality | **B** | Strict TS, zod env validation with prod fail-fast (`instrumentation.ts:4-17`), HMAC webhook signatures, hashed API keys. Offset by `as any` clusters in auth/query plumbing, 10 legacy routes bypassing the structured logger, and swallowed promise rejections on write paths. |
 | Maintainability | **B−** | Excellent engine-per-file separation; poor data-access separation (16 domains in one file); dual persistence backends (Postgres + local JSON) with diverging semantics that every new table must be hand-mirrored across (`client.ts`, `restore-db.ts`, `backup-db.ts` allowlists). |
 | Performance | **C+** | Correct indexes on all 16 tables; Upstash Redis REST rate limiting with prod fail-closed (`api-auth.ts:118-126`). But: `getEvents` loads the whole events table + a LATERAL subquery per row and paginates in memory (`queries.ts:176-347`); bulk inserts are N round trips inside one transaction; `DISTINCT ON` full-table scans back every "latest snapshot" read. Safe to ~10⁵ rows, cliff beyond. |
-| Test Coverage | **B+** | 44 files / 257 tests, route-level + engine-level, deterministic `asOf` patterns. Zero E2E, no CI workflow, serial execution (`fileParallelism: false`), no coverage gates, and 3 test files carry accepted `tsc` drift instead of fixes. |
+| Test Coverage | **A−** | 47 files / 279 tests green in both DB modes, route-level + engine-level, deterministic `asOf` patterns, CI gating typecheck/lint/tests/build. Remaining: zero E2E, serial execution (`fileParallelism: false`), no coverage gates. |
 
 ### Architectural Philosophy
 
@@ -35,7 +37,7 @@ requires a rewrite. All of it requires a disciplined 4-week hardening pass befor
    indexes, FK cascades on teams/governance tables, `CHECK (monthly_budget_usd > 0)`.
 2. **Pure engines, routes second.** Forecast, signals, recommendation, probe-health,
    governance, ask-answer, and briefs are side-effect-free functions with injected clocks
-   (`asOf`). This is why 257 tests run in ~6s of test time. Do not regress this pattern.
+   (`asOf`). This is why hundreds of engine tests run in seconds of test time. Do not regress this pattern.
 3. **Defense in depth at the edges.** SHA-256-hashed API keys with prefix identification
    (`api-keys.ts:28-52`), revoked-key checks on verify, tiered rate limits (60/300/1200),
    Stripe webhook signature verification, HMAC unsubscribe tokens with `timingSafeEqual`,
@@ -66,9 +68,10 @@ requires a rewrite. All of it requires a disciplined 4-week hardening pass befor
    *every* authenticated request (`api-keys.ts:85`), and local-mode full-file
    read-modify-write per insert (`client.ts:123-125`). Hourly polls × 400 models × full
    file rewrites is the dev-mode canary for the prod write pattern.
-3. **No delivery pipeline for quality** — no CI workflow, serial test files, no coverage
-   gates, `tsc` drift normalized in 3 test files. Velocity risk, not just quality risk:
-   the team currently verifies by running the suite manually.
+3. **Delivery pipeline now exists — keep it green.** CI gates typecheck (whole repo,
+  zero drift), lint, dual-mode tests, and build. Residual velocity risks: serial test
+  files, no coverage gates, no E2E. A red or skipped Postgres job must block merge
+  with the same force as a red unit test.
 
 ---
 
@@ -190,7 +193,8 @@ the poll runner. This is better than most systems at this stage.
 
 ### Testing & Quality Assurance
 
-**Genuinely strong foundation:** 44 files / 257 tests mixing pure-engine unit tests
+**Genuinely strong foundation:** 47 files / 279 tests (green in both local-file and real
+Postgres modes) mixing pure-engine unit tests
 (intent routing, citation validation, forecast math with injected `asOf`) and HTTP-level
 route tests (401/400/200 shapes, citation-validated flags). The `asOf` determinism pattern
 is exactly what enables the roadmap's hold-out calibration requirement.
@@ -199,19 +203,23 @@ is exactly what enables the roadmap's hold-out calibration requirement.
 - **No E2E.** No playwright/cypress dependency; nothing exercises signup → watchlist →
   alert → digest, or the `/ask` chat flow, in a browser. Route tests mock nothing at the
   HTTP layer (good) but stop at JSON shapes.
-- **No CI.** No `.github/workflows`. The suite is verified by hand. Combined with manual
-  `tsc`/`eslint`/`build` runs, regressions are a matter of time, not possibility.
+- **CI existed but verified half the system — now it gates everything.** The prior
+  workflow ran tests Postgres-only with no typecheck and no lint, which is how a
+  Postgres-only crash (`interval '1 7d'`), 15 tsc errors, and 12 lint errors all
+  survived simultaneously. `.github/workflows/ci.yml` now gates whole-repo typecheck
+  (zero drift), lint (zero errors), tests in **both** DB modes, and build. It only works
+  if the Postgres service job is never skipped and the suite stays green in both modes;
+  watch for tests that accidentally depend on leftover rows (unique fixtures per test,
+  as fixed in `teams.test.ts` / `governance.test.ts` during the Phase 1 pass).
 - **Serial execution.** `fileParallelism: false` (required by the shared local JSON file)
-  makes the suite take ~84s wall for ~6s of test time. Splitting the local store per file
-  (env-scoped `RADAR_DATA_PATH`) recovers parallelism.
-- **Normalized drift.** Three test files fail `tsc` (advanced-alerts ×8, my-stack ×3,
-  redis-rate-limit ×4 — the last mutates readonly `process.env.NODE_ENV`). Accepted drift
-  becomes a place to hide new drift. Fix the 15 errors; they are all small.
+  makes the suite take ~2–3 min wall for seconds of test time. Splitting the local store
+  per file (env-scoped `RADAR_DATA_PATH`) recovers parallelism.
 - **Test seam in production code.** `(globalThis as any).__SIMULATE_STRIPE_CANCEL_FAILURE`
   (`billing/stripe.ts:147`) is a global flag any caller can flip. Move to injected
   options; globals in billing paths erode auditability.
 - **No coverage gates, no load tests in CI.** `docs/load-test-results/` exists as a
-  directory — results without a repeatable harness decay immediately.
+  directory — results without a repeatable harness decay immediately. The
+  `tests/events-scale.test.ts` 100k-row benchmark is the pattern to extend.
 
 ---
 
@@ -234,7 +242,7 @@ is exactly what enables the roadmap's hold-out calibration requirement.
 | **P2** | Modularity | `mcp/tools.ts` vs `api/v1/*` routes | Retrieval-context assembly duplicated (ask, forecast). | Third consumer copies the block again; divergence between API and MCP answers. | Shared `buildAskContext()` / `buildForecastContext()` services (also unit-testable once). |
 | **P2** | API lifecycle | `/api/*` vs `/api/v1/*` duplicates | Two surfaces, two error styles, double maintenance. | Behavior skew; security fixes applied once. | `Deprecation` + `Sunset` headers on legacy routes, 2-release removal, docs note. |
 | **P2** | Throughput | `api/cron/digest/route.ts:58-105` | Sequential per-recipient awaits (watchlist → profile → render → send). | Digest wall-time grows linearly with subscribers; breaches serverless limits first. | Batch independent fetches; bounded concurrency (e.g., 5) for send; per-recipient try/catch so one failure doesn't abort the run. |
-| **P2** | Test hygiene | `billing/stripe.ts:147`, 3 drift files | Global test seam in billing code; accepted `tsc` drift; `NODE_ENV` mutation. | Auditability erosion; drift camouflage. | Inject failure behavior via options param; fix the 15 type errors; freeze `process.env` handling in tests. |
+| **P2** | Test hygiene | `billing/stripe.ts:147` | Global test seam in billing code (`__SIMULATE_*`); auditability erosion. | Inject failure behavior via options param. (The 15-file `tsc` drift and `NODE_ENV` mutation were fixed in the Phase 1 pass.) |
 | **P2** | Schema hygiene | `schema.sql` | Free-text `tier`/`role`/`status` columns without `CHECK`; `updated_at` never maintained. | Invalid states persist silently (see P0-1: `tier='production'`). | `CHECK` constraints + `updated_at` trigger; backfill + normalize existing rows. |
 
 ### Before/after: P0 tier normalization (`auth.ts`, `feature-flags.ts`)
@@ -412,14 +420,14 @@ Goal: remove the P0s, make quality automatic, stop the growth cliff. No new user
 
 | # | Work item | DoD |
 |---|---|---|
-| 1.1 | Tier normalization + monotonic upgrade + existing-row backfill; enforcement-on test matrix (free/pro/enterprise × session/key) | `FEATURE_ENFORCEMENT=true` green in CI; cutover runbook in `docs/` |
-| 1.2 | `getEvents` SQL-side filtering/sorting/keyset pagination; drop LATERAL | p95 changelog latency measured before/after on 100k seeded events; memory flat |
+| 1.1 | Tier normalization + monotonic upgrade + existing-row backfill; enforcement-on test matrix (free/pro/enterprise × session/key) | `FEATURE_ENFORCEMENT=true` green in CI; cutover runbook in `docs/` — ✅ DONE (Phase 1 pass: `normalizeTier()`, monotonic upgrades, `migrations/007_*`, 6-test matrix) |
+| 1.2 | `getEvents` SQL-side filtering/sorting/keyset pagination; drop LATERAL | p95 changelog latency measured before/after on 100k seeded events; memory flat — ✅ DONE (2114ms/100k-rows/+63MB → 567ms/50-rows, 3.7x; `tests/events-scale.test.ts`) |
 | 1.3 | Multi-row bulk inserts for snapshots/events | Poll duration measured; ≤3 DB round trips for writes |
 | 1.4 | `fetchWithTimeout` on all ingestion paths; per-source budgets < 60s; `partial` status exercised | Kill-upstream test: hung OpenRouter still yields partial run |
 | 1.5 | Schedule prune (weekly); publish retention policy; `PRUNE_DAYS` honored | Table sizes stable week-over-week in staging |
 | 1.6 | Logger sweep of 10 legacy routes; `captureException` wired to an error transport (Sentry or equivalent) | Zero `console.error` outside `logger.ts`/CLI; test alert fires end-to-end |
-| 1.7 | CI workflow (tsc incl. tests, eslint, vitest in both DB modes, build) + fix 15 type errors in 3 drift files | Red main is impossible; drift files clean |
-| 1.8 | Constant-time secrets, email escaping, `CRON/ADMIN_SECRET` prod-required, test key prefixes | Security checklist signed off in review |
+| 1.7 | CI workflow (tsc incl. tests, eslint, vitest in both DB modes, build) + fix 15 type errors in 3 drift files | Red main is impossible; drift files clean — ✅ DONE (`.github/workflows/ci.yml` with Postgres service job; drift eliminated; gate verified to bite) |
+| 1.8 | Constant-time secrets, email escaping, `CRON/ADMIN_SECRET` prod-required, test key prefixes | Security checklist signed off in review — ⚠️ PARTIAL (constant-time helper + email escaping done in Phase 1 pass; key prefixes, CORS tightening, prod-required secrets still queued) |
 
 ### Phase 2: Architectural Scaling & Performance (Medium-Term: Month 2–3)
 
@@ -494,6 +502,7 @@ liability, not a safety net.
 
 ---
 
-*Review conducted against repository state at 44 test files / 257 passing tests, `tsc`
-clean for `src/`+`scripts/`, green `next build`. Re-run the Phase 1 exit criteria
-(1.7) before treating any grade above as current.*
+*Review conducted against repository state at 47 test files / 279 passing tests in both
+local and Postgres modes, `tsc` clean repo-wide including tests, zero eslint errors,
+green `next build`. Re-run the Phase 1 exit criteria (1.7) before treating any grade
+above as current.*
