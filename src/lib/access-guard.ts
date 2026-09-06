@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { getSessionUser, AuthSession } from './auth';
 import { authOptions } from './auth.config';
-import { hasAccess, AccessTier, FeatureKey, FEATURES } from './feature-flags';
+import { hasAccess, AccessTier, FeatureKey, FEATURES, normalizeTier } from './feature-flags';
 
 /**
  * Set FEATURE_ENFORCEMENT=true to enable tier-based access control.
@@ -24,7 +24,9 @@ export async function getPageFeatureTier(): Promise<AccessTier> {
   try {
     const session = await getServerSession(authOptions);
     if (session?.user?.email) {
-      baseTier = ((session.user as any).tier || 'free') as AccessTier;
+      // Session tiers predate the canonical vocabulary — normalize raw values
+      // ('production', 'developer', ...) instead of casting them through.
+      baseTier = normalizeTier((session.user as any).tier || 'free');
     }
   } catch {
     // no session context — treat as free
@@ -63,7 +65,9 @@ export async function requireFeature(
   }
 
   if (isFeatureEnforcementEnabled()) {
-    const userTier = (session.user.tier || 'free') as AccessTier;
+    // Normalize before gating: raw key-vocabulary tiers ('production', ...) must
+    // never reach hasAccess, which denies anything outside free/pro/enterprise.
+    const userTier = normalizeTier(session.user.tier || 'free');
 
     if (!hasAccess(userTier, feature)) {
       return {

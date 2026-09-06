@@ -20,6 +20,7 @@ import {
   decideMigrationApproval,
   createOrGetUser,
   createApiKey,
+  createTeam,
   insertSnapshots,
   upsertUsageProfile,
 } from '../src/lib/db/queries';
@@ -164,6 +165,8 @@ describe('Phase 5 - Budget governance: persistence', () => {
   const EX = `gov.persist.${Date.now()}`;
 
   it('8. createBudgetRule + scope queries round-trip personal and team rules', async () => {
+    // FK integrity (enforced in Postgres): the owner row must exist first.
+    await createOrGetUser({ email: EX });
     const personal = await createBudgetRule({
       name: 'Personal cap',
       scope: 'personal',
@@ -184,22 +187,31 @@ describe('Phase 5 - Budget governance: persistence', () => {
   });
 
   it('9. getBudgetRulesForTeam scopes team rules and getAllBudgetRules scans all', async () => {
+    await createOrGetUser({ email: EX });
+    const team = await createTeam(`Gov Team ${Date.now()}`, EX);
     const teamRule = await createBudgetRule({
       name: 'Team cap',
       scope: 'team',
-      team_id: 424242,
+      team_id: team.id,
       owner_email: EX,
       monthly_budget_usd: 800,
     });
-    const byTeam = await getBudgetRulesForTeam(424242);
+    const byTeam = await getBudgetRulesForTeam(team.id!);
     expect(byTeam.some((r) => r.id === teamRule.id)).toBe(true);
     const all = await getAllBudgetRules();
     expect(all.some((r) => r.id === teamRule.id)).toBe(true);
   });
 
   it('10. recordBudgetAlert + getBudgetAlerts round-trip with alert-type and recency filters', async () => {
+    await createOrGetUser({ email: EX });
+    const rule = await createBudgetRule({
+      name: 'Alert rule',
+      scope: 'personal',
+      owner_email: EX,
+      monthly_budget_usd: 1000,
+    });
     await recordBudgetAlert({
-      rule_id: 1,
+      rule_id: rule.id!,
       model_family: 'acme',
       projected_monthly_usd: 1200,
       budget_usd: 1000,
@@ -216,8 +228,15 @@ describe('Phase 5 - Budget governance: persistence', () => {
   });
 
   it('11. Migration approval workflow: create → pending → decide → resolved', async () => {
+    await createOrGetUser({ email: EX });
+    const rule = await createBudgetRule({
+      name: 'Approval rule',
+      scope: 'personal',
+      owner_email: EX,
+      monthly_budget_usd: 1000,
+    });
     const created = await createMigrationApproval({
-      rule_id: 1,
+      rule_id: rule.id!,
       team_id: null,
       from_model_id: 'acme/a-1',
       to_model_id: 'beta/z-9',

@@ -25,7 +25,11 @@ function authReq(path: string, method: string, key: string, body?: unknown) {
 async function createAuthedUser(tier: string, tag: string, email?: string) {
   const addr = email || `team_${tag}_${tier}_${Date.now()}@test.com`;
   const user = await createOrGetUser({ email: addr, tier });
-  const { plaintextKey, keyRecord } = generateApiKey(user.email, 'production');
+  // Issue a credential matching the user tier: under monotonic tier upgrades,
+  // a production key would lift a free user to enterprise, defeating the
+  // "free user blocked" assertions below.
+  const keyTier = tier === 'enterprise' ? 'production' : tier === 'pro' ? 'developer' : 'free';
+  const { plaintextKey, keyRecord } = generateApiKey(user.email, keyTier as 'free' | 'developer' | 'production');
   await createApiKey(keyRecord);
   return { email: user.email, key: plaintextKey, user };
 }
@@ -55,11 +59,12 @@ describe('Phase 2.4: Team Workspaces (Enterprise)', () => {
   it('3. Enterprise-eligible user creates a team and becomes its admin', async () => {
     process.env.FEATURE_ENFORCEMENT = 'true';
     const { key } = await createAuthedUser('enterprise', 'owner');
-    const req = authReq('/api/teams', 'POST', key, { name: 'Radar Core Team' });
+    const teamName = `Radar Core Team ${Date.now()}`;
+    const req = authReq('/api/teams', 'POST', key, { name: teamName });
     const res = await createTeamRoute(req);
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.team.name).toBe('Radar Core Team');
+    expect(body.team.name).toBe(teamName);
     expect(body.team.members).toHaveLength(1);
     expect(body.team.members[0].role).toBe('admin');
     expect(body.team.members[0].member_email).toBe(body.team.owner_email);
@@ -67,7 +72,7 @@ describe('Phase 2.4: Team Workspaces (Enterprise)', () => {
 
   it('4. Team detail visible to the owner; rejected for non-members', async () => {
     const owner = await createAuthedUser('enterprise', 'detail');
-    const team = await createTeam('Detail Workspace', owner.email);
+    const team = await createTeam(`Detail Workspace ${Date.now()}`, owner.email);
 
     const stranger = await createAuthedUser('enterprise', 'solo');
     const strangerRes = await teamDetailRoute(
@@ -88,7 +93,7 @@ describe('Phase 2.4: Team Workspaces (Enterprise)', () => {
 
   it('5. Admin invites a member; invited member appears in team detail', async () => {
     const owner = await createAuthedUser('enterprise', 'inviter');
-    const team = await createTeam('Invite Workspace', owner.email);
+    const team = await createTeam(`Invite Workspace ${Date.now()}`, owner.email);
 
     const addRes = await addMemberRoute(
       authReq(`/api/teams/${team.id}/members`, 'POST', owner.key, {
@@ -113,7 +118,7 @@ describe('Phase 2.4: Team Workspaces (Enterprise)', () => {
 
   it('6. Non-admin members cannot manage team members (403)', async () => {
     const owner = await createAuthedUser('enterprise', 'plain');
-    const team = await createTeam('Permission Workspace', owner.email);
+    const team = await createTeam(`Permission Workspace ${Date.now()}`, owner.email);
     await addTeamMember(team.id, 'plainmember@test.com', 'member');
     const member = await createAuthedUser('enterprise', 'pmember', 'plainmember@test.com');
 
@@ -126,7 +131,7 @@ describe('Phase 2.4: Team Workspaces (Enterprise)', () => {
 
   it('7. Shared watchlist add / list / remove flows per team', async () => {
     const owner = await createAuthedUser('enterprise', 'wl');
-    const team = await createTeam('Watchlist Workspace', owner.email);
+    const team = await createTeam(`Watchlist Workspace ${Date.now()}`, owner.email);
 
     const addRes = await addWatchlistRoute(
       authReq(`/api/teams/${team.id}/watchlist`, 'POST', owner.key, { modelId: 'openai/gpt-4o' }),
@@ -162,7 +167,7 @@ describe('Phase 2.4: Team Workspaces (Enterprise)', () => {
 
   it('8. Admin can rename; only the owner can delete the team', async () => {
     const owner = await createAuthedUser('enterprise', 'sudo');
-    const team = await createTeam('Rename Workspace', owner.email);
+    const team = await createTeam(`Rename Workspace ${Date.now()}`, owner.email);
     await addTeamMember(team.id, 'sudo-collab@test.com', 'member');
 
     const renameRes = await renameRoute(
@@ -189,7 +194,7 @@ describe('Phase 2.4: Team Workspaces (Enterprise)', () => {
 
   it('9. Owner cannot be removed from their own team (400)', async () => {
     const owner = await createAuthedUser('enterprise', 'ownerguard');
-    const team = await createTeam('Owner Guard Workspace', owner.email);
+    const team = await createTeam(`Owner Guard Workspace ${Date.now()}`, owner.email);
 
     const removeRes = await removeMemberRoute(
       authReq(

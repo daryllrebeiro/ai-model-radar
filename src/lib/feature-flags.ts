@@ -68,6 +68,28 @@ export const FEATURES = {
 export type FeatureKey = keyof typeof FEATURES;
 
 /**
+ * Canonical tier vocabulary used by feature flags: 'free' | 'pro' | 'enterprise'.
+ *
+ * API keys historically speak a different vocabulary ('free' | 'developer' |
+ * 'production') and user rows may still carry those raw values. Every auth
+ * boundary must pass tiers through normalizeTier() before calling hasAccess —
+ * hasAccess deliberately returns false for unrecognized values, so an
+ * unmapped tier denies everything once FEATURE_ENFORCEMENT is on.
+ */
+const KEY_TIER_TO_ACCESS_TIER: Record<string, AccessTier> = {
+  free: 'free',
+  pro: 'pro',
+  enterprise: 'enterprise',
+  developer: 'pro',
+  production: 'enterprise',
+};
+
+export function normalizeTier(tier: unknown): AccessTier {
+  if (typeof tier !== 'string') return 'free';
+  return KEY_TIER_TO_ACCESS_TIER[tier.toLowerCase().trim()] ?? 'free';
+}
+
+/**
  * Check if a user's tier grants access to a feature.
  */
 export function hasAccess(userTier: AccessTier | string, feature: FeatureKey): boolean {

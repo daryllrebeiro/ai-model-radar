@@ -10,8 +10,11 @@ afterEach(() => {
 
 async function createAuthedUser(tier: string, tag: string) {
   const email = `stream_${tag}_${tier}_${Date.now()}@test.com`;
-  const user = await createOrGetUser({ email, tier });
-  const { plaintextKey, keyRecord } = generateApiKey(email, 'production');
+  await createOrGetUser({ email, tier });
+  // Credential matches the user tier so the free-blocked assertion below is
+  // not lifted to enterprise by the monotonic upgrade in getSessionUser.
+  const keyTier = tier === 'enterprise' ? 'production' : tier === 'pro' ? 'developer' : 'free';
+  const { plaintextKey, keyRecord } = generateApiKey(email, keyTier as 'free' | 'developer' | 'production');
   await createApiKey(keyRecord);
   return { email, key: plaintextKey };
 }
