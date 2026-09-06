@@ -2,16 +2,18 @@ import React from 'react';
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getModelDetail, getModelCurrentList } from '@/lib/db/queries';
+import { getModelDetail, getModelCurrentList, getLatestSnapshotsMap, getEvents, getRecentEndpointTelemetry } from '@/lib/db/queries';
 import { PriceChart } from '@/components/models/price-chart';
 import { ModelSpecs } from '@/components/models/model-specs';
+import { ReliabilityCard } from '@/components/models/reliability-card';
 import { EventCard } from '@/components/feed/event-card';
 import { CompareButton } from '@/components/compare/compare-button';
 import { WatchButton } from '@/components/watchlist/watch-button';
 import { MigrationAlternativesCard } from '@/components/models/migration-alternatives-card';
 import { BadgeEmbedCard } from '@/components/models/badge-embed-card';
 import { findMigrationAlternatives } from '@/lib/migration-advisor';
-import { ArrowLeft, Cpu, Activity, History, LineChart } from 'lucide-react';
+import { getPriceDropForecasts } from '@/lib/forecast';
+import { ArrowLeft, Cpu, Activity, History, LineChart, TrendingDown } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,6 +59,17 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
   const { current, snapshots, events } = data;
   const { models: allModels } = await getModelCurrentList({ limit: 100 });
   const migrationReport = findMigrationAlternatives(modelId, allModels);
+
+  const [snapshotsMap, eventsRes] = await Promise.all([
+    getLatestSnapshotsMap(),
+    getEvents({ limit: 500 }),
+  ]);
+  const forecast = getPriceDropForecasts(Array.from(snapshotsMap.values()), eventsRes.events, {
+    minProbability: 0.3,
+    maxForecasts: 1,
+  }).find((f) => f.model_id === current.model_id) || null;
+
+  const telemetry = await getRecentEndpointTelemetry({ modelId: current.model_id, limit: 20 });
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -115,7 +128,57 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
         </section>
       )}
 
-      {/* 3. Interactive Price History Chart */}
+      {/* 3. RadarForecast panel */}
+      {forecast && !current.is_free && (
+        <section className="p-5 sm:p-6 rounded-2xl border border-amber-900/50 bg-amber-950/20 backdrop-blur-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+              <TrendingDown className="w-4 h-4 text-amber-400" />
+              RadarForecast: Price Cut Likelihood
+            </h2>
+            <span className={`text-xs font-mono px-2 py-1 rounded-full border ${
+              forecast.probability >= 0.75
+                ? 'text-amber-300 border-amber-600/60 bg-amber-950/60'
+                : forecast.probability >= 0.5
+                ? 'text-yellow-200 border-yellow-600/60 bg-yellow-950/40'
+                : 'text-gray-400 border-gray-700 bg-gray-900/40'
+            }`}>
+              {Math.round(forecast.probability * 100)}% within {forecast.expected_window_days}d
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono text-gray-400">
+            <div className="p-3 rounded-lg bg-[#111827]/80 border border-gray-800">
+              <div className="text-gray-500 uppercase">Confidence</div>
+              <div className="text-white mt-1 capitalize">{forecast.confidence}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-[#111827]/80 border border-gray-800">
+              <div className="text-gray-500 uppercase">Window</div>
+              <div className="text-white mt-1">{forecast.expected_window_days}d</div>
+            </div>
+            <div className="p-3 rounded-lg bg-[#111827]/80 border border-gray-800">
+              <div className="text-gray-500 uppercase">Typical Cut</div>
+              <div className="text-white mt-1">{forecast.expected_pct_change !== null ? `${forecast.expected_pct_change}%` : 'n/a'}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-[#111827]/80 border border-gray-800">
+              <div className="text-gray-500 uppercase">Line Cadence</div>
+              <div className="text-white mt-1">{forecast.cadence_days !== null ? `${forecast.cadence_days}d / ${forecast.cadence_samples} obs` : 'n/a'}</div>
+            </div>
+          </div>
+          <ul className="space-y-1">
+            {forecast.factors.map((factor) => (
+              <li key={factor} className="text-xs font-mono text-amber-200/70 flex items-start gap-2">
+                <span className="text-amber-500">▸</span>
+                {factor}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* 4. Endpoint reliability (live probe telemetry, APT_PROBE) */}
+      <ReliabilityCard telemetry={telemetry} modelName={current.name} />
+
+      {/* 5. Interactive Price History Chart */}
       <section className="p-5 sm:p-6 rounded-2xl border border-gray-800 bg-[#111827]/70 backdrop-blur-sm space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
@@ -129,12 +192,12 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
         <PriceChart snapshots={snapshots} events={events} />
       </section>
 
-      {/* 4. Embed Live Price Badge */}
+      {/* 6. Embed Live Price Badge */}
       <section>
         <BadgeEmbedCard modelId={current.model_id} modelName={current.name} />
       </section>
 
-      {/* 5. Full Event Changelog for this Model */}
+      {/* 7. Full Event Changelog for this Model */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">

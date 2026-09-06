@@ -8,6 +8,10 @@ import {
   mcpEolModels,
   mcpArbitrage,
   mcpMarketStats,
+  mcpForecast,
+  mcpMigrationRecommendation,
+  mcpEndpointTelemetry,
+  mcpAskRadar,
 } from '../src/lib/mcp/tools';
 
 interface SignalRecord {
@@ -103,5 +107,88 @@ describe('Phase 3.4: MCP server data tools', () => {
     expect(typeof data.totalActiveModels).toBe('number');
     expect(typeof data.totalProviders).toBe('number');
     expect(typeof data.totalFreeModels).toBe('number');
+  });
+
+  it('11. get_forecast returns forecast shapes with generated_at summary', async () => {
+    const result = await mcpForecast({ limit: 5 });
+    const data = result.data as {
+      generated_at: string;
+      summary: { total: number; high_confidence: number };
+      forecasts: { model_id: string; probability: number }[];
+    };
+    expect(typeof data.generated_at).toBe('string');
+    expect(typeof data.summary.total).toBe('number');
+    expect(typeof data.summary.high_confidence).toBe('number');
+    expect(Array.isArray(data.forecasts)).toBe(true);
+    expect(data.forecasts.length).toBeLessThanOrEqual(5);
+    for (const f of data.forecasts) {
+      expect(typeof f.model_id).toBe('string');
+      expect(f.probability).toBeGreaterThanOrEqual(0);
+      expect(f.probability).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('12. get_migration_recommendation returns a report with primary_model and ranked recommendations', async () => {
+    const result = await mcpMigrationRecommendation({
+      primaryModelId: 'openai/gpt-4o',
+      monthlyPromptTokens: 50_000_000,
+      monthlyCompTokens: 50_000_000,
+    });
+    const data = result.data as {
+      generated_at: string;
+      primary_model: { model_id: string; current_monthly_usd: number };
+      best_switch: { monthly_savings_usd: number } | null;
+      recommendations: { monthly_savings_usd: number }[];
+      flags: { primary_eol: boolean };
+    };
+    expect(typeof data.generated_at).toBe('string');
+    expect(typeof data.primary_model.current_monthly_usd).toBe('number');
+    expect(typeof data.flags.primary_eol).toBe('boolean');
+    expect(Array.isArray(data.recommendations)).toBe(true);
+    for (const r of data.recommendations) {
+      expect(r.monthly_savings_usd).toBeGreaterThan(0);
+    }
+  });
+
+  it('13. get_endpoint_telemetry returns summary counters and telemetry rows with a health classification', async () => {
+    const result = await mcpEndpointTelemetry({ limit: 10 });
+    const data = result.data as {
+      generated_at: string;
+      summary: { total: number; healthy: number; degraded: number; down: number };
+      telemetry: { model_id: string; health: { status: string } }[];
+    };
+    expect(typeof data.generated_at).toBe('string');
+    expect(typeof data.summary.total).toBe('number');
+    expect(typeof data.summary.healthy).toBe('number');
+    expect(typeof data.summary.degraded).toBe('number');
+    expect(typeof data.summary.down).toBe('number');
+    expect(Array.isArray(data.telemetry)).toBe(true);
+    expect(data.telemetry.length).toBeLessThanOrEqual(10);
+    for (const t of data.telemetry) {
+      expect(typeof t.model_id).toBe('string');
+      expect(['healthy', 'degraded', 'down']).toContain(t.health.status);
+    }
+
+    const degraded = await mcpEndpointTelemetry({ degradedOnly: true });
+    const degradedData = degraded.data as { telemetry: { health: { status: string } }[] };
+    for (const t of degradedData.telemetry) {
+      expect(['degraded', 'down']).toContain(t.health.status);
+    }
+  });
+
+  it('14. ask_radar answers a market question with citations flagged as validated', async () => {
+    const result = await mcpAskRadar({ question: 'What changed in the market recently?' });
+    const data = result.data as {
+      question: string;
+      intent: string;
+      answer: string;
+      citations_validated: boolean;
+      citations: unknown[];
+    };
+    expect(data.question.length).toBeGreaterThan(0);
+    expect(typeof data.intent).toBe('string');
+    expect(data.answer.length).toBeGreaterThan(20);
+    expect(data.citations_validated).toBe(true);
+    expect(Array.isArray(data.citations)).toBe(true);
   });
 });

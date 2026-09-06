@@ -1,7 +1,9 @@
 import { ModelSnapshot, ModelCurrent } from '@/types/models';
 import { ModelEvent, EventFilterParams, MarketStats, PriceDropDeal } from '@/types/events';
 import { Team, TeamMember, TeamRole, TeamDetail } from '@/types/teams';
+import { BudgetRule, BudgetRuleScope, BudgetAlertRecord, MigrationApproval } from '@/types/governance';
 import { isPostgres, getPgPool, getLocalState, saveLocalState } from './client';
+import { EndpointTelemetry } from '@/types/telemetry';
 import { extractProvider } from '../utils';
 import { encodeCursor, decodeCursor } from '../pagination';
 
@@ -1759,6 +1761,665 @@ export async function getTeamDetail(teamId: number): Promise<TeamDetail | null> 
     getTeamWatchlist(teamId),
   ]);
   return { ...team, members, sharedWatchlist };
+}
+
+export interface UsageProfile {
+  email: string;
+  monthly_prompt_tokens: number;
+  monthly_comp_tokens: number;
+  cache_hit_ratio: number;
+  batch_discount: number;
+  primary_model_id: string;
+  updated_at: string;
+}
+
+export interface UsageProfileInput {
+  email: string;
+  monthly_prompt_tokens: number;
+  monthly_comp_tokens: number;
+  cache_hit_ratio?: number;
+  batch_discount?: number;
+  primary_model_id: string;
+}
+
+/**
+ * Creates or updates a user's workload usage profile (upsert by email).
+ */
+export async function upsertUsageProfile(profile: UsageProfileInput): Promise<UsageProfile> {
+  const cacheHit = Math.min(1, Math.max(0, profile.cache_hit_ratio ?? 0));
+  const batch = Math.min(1, Math.max(0, profile.batch_discount ?? 0));
+
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `INSERT INTO usage_profiles (email, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (email) DO UPDATE SET
+         monthly_prompt_tokens = EXCLUDED.monthly_prompt_tokens,
+         monthly_comp_tokens = EXCLUDED.monthly_comp_tokens,
+         cache_hit_ratio = EXCLUDED.cache_hit_ratio,
+         batch_discount = EXCLUDED.batch_discount,
+         primary_model_id = EXCLUDED.primary_model_id,
+         updated_at = NOW()
+       RETURNING email, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at`,
+      [profile.email, Math.floor(profile.monthly_prompt_tokens), Math.floor(profile.monthly_comp_tokens), cacheHit, batch, profile.primary_model_id]
+    );
+    const r = res.rows[0];
+    return {
+      email: r.email,
+      monthly_prompt_tokens: Number(r.monthly_prompt_tokens),
+      monthly_comp_tokens: Number(r.monthly_comp_tokens),
+      cache_hit_ratio: Number(r.cache_hit_ratio),
+      batch_discount: Number(r.batch_discount),
+      primary_model_id: r.primary_model_id,
+      updated_at: r.updated_at,
+    };
+  } else {
+    const state = getLocalState();
+    if (!state.usage_profiles) state.usage_profiles = [];
+    const existing = state.usage_profiles.find((p: any) => p.email === profile.email);
+    const record = {
+      email: profile.email,
+      monthly_prompt_tokens: Math.floor(profile.monthly_prompt_tokens),
+      monthly_comp_tokens: Math.floor(profile.monthly_comp_tokens),
+      cache_hit_ratio: cacheHit,
+      batch_discount: batch,
+      primary_model_id: profile.primary_model_id,
+      updated_at: new Date().toISOString(),
+    };
+    if (existing) {
+      Object.assign(existing, record);
+    } else {
+      state.usage_profiles.push({ id: state.usage_profiles.length + 1, ...record });
+    }
+    saveLocalState(state);
+    return record;
+  }
+}
+
+/**
+ * Loads a user's usage profile by email, if one exists.
+ */
+export async function getUsageProfileByEmail(email: string): Promise<UsageProfile | null> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT email, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at
+       FROM usage_profiles WHERE email = $1 LIMIT 1`,
+      [email]
+    );
+    if (res.rows.length === 0) return null;
+    const r = res.rows[0];
+    return {
+      email: r.email,
+      monthly_prompt_tokens: Number(r.monthly_prompt_tokens),
+      monthly_comp_tokens: Number(r.monthly_comp_tokens),
+      cache_hit_ratio: Number(r.cache_hit_ratio),
+      batch_discount: Number(r.batch_discount),
+      primary_model_id: r.primary_model_id,
+      updated_at: r.updated_at,
+    };
+  } else {
+    const state = getLocalState();
+    const match = (state.usage_profiles || []).find((p: any) => p.email === email);
+    if (!match) return null;
+    return {
+      email: match.email,
+      monthly_prompt_tokens: Number(match.monthly_prompt_tokens),
+      monthly_comp_tokens: Number(match.monthly_comp_tokens),
+      cache_hit_ratio: Number(match.cache_hit_ratio),
+      batch_discount: Number(match.batch_discount),
+      primary_model_id: match.primary_model_id,
+      updated_at: match.updated_at,
+    };
+  }
+}
+
+// ─── ENDPOINT PROBE TELEMETRY (Pro, APT_PROBE) ─────────────────────
+
+/**
+ * Persists a single endpoint probe telemetry record.
+ */
+export async function saveEndpointTelemetry(record: EndpointTelemetry): Promise<void> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    await pool.query(
+      `INSERT INTO endpoint_telemetry
+        (model_id, provider, endpoint_url, checked_at, online, http_status, p95_latency_ms, avg_latency_ms,
+         tokens_per_sec, rate_limited, rate_limited_count, retry_after_sec, sample_count, is_free, free_tier_active, error)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+      [
+        record.model_id,
+        record.provider,
+        record.endpoint_url || null,
+        record.checked_at,
+        record.online,
+        record.http_status,
+        record.p95_latency_ms,
+        record.avg_latency_ms,
+        record.tokens_per_sec,
+        record.rate_limited,
+        record.rate_limited_count,
+        record.retry_after_sec,
+        record.sample_count,
+        record.is_free,
+        record.free_tier_active,
+        record.error || null,
+      ]
+    );
+  } else {
+    const state = getLocalState();
+    if (!state.endpoint_telemetry) state.endpoint_telemetry = [];
+    state.endpoint_telemetry.push({
+      id: state.endpoint_telemetry.length + 1,
+      model_id: record.model_id,
+      provider: record.provider,
+      endpoint_url: record.endpoint_url || null,
+      checked_at: record.checked_at,
+      online: Boolean(record.online),
+      http_status: record.http_status,
+      p95_latency_ms: record.p95_latency_ms !== null && record.p95_latency_ms !== undefined ? Number(record.p95_latency_ms) : null,
+      avg_latency_ms: record.avg_latency_ms !== null && record.avg_latency_ms !== undefined ? Number(record.avg_latency_ms) : null,
+      tokens_per_sec: record.tokens_per_sec !== null && record.tokens_per_sec !== undefined ? Number(record.tokens_per_sec) : null,
+      rate_limited: Boolean(record.rate_limited),
+      rate_limited_count: Number(record.rate_limited_count) || 0,
+      retry_after_sec: record.retry_after_sec,
+      sample_count: Number(record.sample_count) || 0,
+      is_free: Boolean(record.is_free),
+      free_tier_active: record.free_tier_active,
+      error: record.error || null,
+    });
+    saveLocalState(state);
+  }
+}
+
+export interface EndpointTelemetryQuery {
+  modelId?: string;
+  provider?: string;
+  limit?: number;
+  sinceMs?: number;
+}
+
+/**
+ * Retrieves recent endpoint telemetry, newest first.
+ */
+export async function getRecentEndpointTelemetry(
+  opts: EndpointTelemetryQuery = {}
+): Promise<EndpointTelemetry[]> {
+  const limit = Math.min(500, Math.max(1, Math.floor(opts.limit ?? 50)));
+
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const where: string[] = [];
+    const params: any[] = [];
+    if (opts.modelId) {
+      params.push(opts.modelId);
+      where.push(`model_id = $${params.length}`);
+    }
+    if (opts.provider) {
+      params.push(opts.provider);
+      where.push(`provider = $${params.length}`);
+    }
+    if (opts.sinceMs) {
+      params.push(new Date(Date.now() - opts.sinceMs).toISOString());
+      where.push(`checked_at >= $${params.length}`);
+    }
+    params.push(limit);
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const res = await pool.query(
+      `SELECT * FROM endpoint_telemetry ${whereSql} ORDER BY checked_at DESC LIMIT $${params.length}`,
+      params
+    );
+    return res.rows.map((r: any) => ({
+      id: Number(r.id),
+      model_id: r.model_id,
+      provider: r.provider,
+      endpoint_url: r.endpoint_url,
+      checked_at: r.checked_at,
+      online: Boolean(r.online),
+      http_status: r.http_status,
+      p95_latency_ms: r.p95_latency_ms !== null ? Number(r.p95_latency_ms) : null,
+      avg_latency_ms: r.avg_latency_ms !== null ? Number(r.avg_latency_ms) : null,
+      tokens_per_sec: r.tokens_per_sec !== null ? Number(r.tokens_per_sec) : null,
+      rate_limited: Boolean(r.rate_limited),
+      rate_limited_count: Number(r.rate_limited_count),
+      retry_after_sec: r.retry_after_sec,
+      sample_count: Number(r.sample_count),
+      is_free: Boolean(r.is_free),
+      free_tier_active: r.free_tier_active,
+      error: r.error,
+    }));
+  } else {
+    const state = getLocalState();
+    const cutoff = opts.sinceMs ? new Date(Date.now() - opts.sinceMs).getTime() : null;
+    const rows = (state.endpoint_telemetry || [])
+      .filter((r: any) => !opts.modelId || r.model_id === opts.modelId)
+      .filter((r: any) => !opts.provider || r.provider === opts.provider)
+      .filter((r: any) => (cutoff === null ? true : new Date(r.checked_at).getTime() >= cutoff))
+      .sort((a: any, b: any) => new Date(b.checked_at).getTime() - new Date(a.checked_at).getTime())
+      .slice(0, limit);
+    return rows.map((r: any) => ({
+      ...r,
+      online: Boolean(r.online),
+      rate_limited: Boolean(r.rate_limited),
+      is_free: Boolean(r.is_free),
+    }));
+  }
+}
+
+// ─── BUDGET GOVERNANCE (Enterprise, GOVERNANCE) ──────────────────
+
+export interface BudgetRuleInput {
+  name: string;
+  scope: BudgetRuleScope;
+  team_id?: number | null;
+  owner_email: string;
+  monthly_budget_usd: number;
+  alert_threshold_pct?: number;
+  approval_required?: boolean;
+  notify_email?: string | null;
+  active?: boolean;
+}
+
+function mapBudgetRuleRows(rows: any[]): BudgetRule[] {
+  return rows.map((r) => ({
+    id: Number(r.id),
+    name: r.name,
+    scope: r.scope,
+    team_id: r.team_id !== null && r.team_id !== undefined ? Number(r.team_id) : null,
+    owner_email: r.owner_email,
+    monthly_budget_usd: Number(r.monthly_budget_usd),
+    alert_threshold_pct: Number(r.alert_threshold_pct),
+    approval_required: Boolean(r.approval_required),
+    notify_email: r.notify_email || null,
+    active: Boolean(r.active),
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  }));
+}
+
+function mapBudgetRuleRow(r: any): BudgetRule {
+  return mapBudgetRuleRows([r])[0];
+}
+
+export async function createBudgetRule(input: BudgetRuleInput): Promise<BudgetRule> {
+  const threshold = Math.min(1, Math.max(0, input.alert_threshold_pct ?? 0.8));
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `INSERT INTO budget_rules
+        (name, scope, team_id, owner_email, monthly_budget_usd, alert_threshold_pct, approval_required, notify_email, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [
+        input.name,
+        input.scope,
+        input.team_id ?? null,
+        input.owner_email,
+        Math.floor(input.monthly_budget_usd * 100) / 100,
+        threshold,
+        Boolean(input.approval_required),
+        input.notify_email || null,
+        input.active !== false,
+      ]
+    );
+    return mapBudgetRuleRows(res.rows)[0];
+  } else {
+    const state = getLocalState();
+    if (!state.budget_rules) state.budget_rules = [];
+    const record = {
+      id: state.budget_rules.length + 1,
+      name: input.name,
+      scope: input.scope,
+      team_id: input.team_id ?? null,
+      owner_email: input.owner_email,
+      monthly_budget_usd: Math.floor(input.monthly_budget_usd * 100) / 100,
+      alert_threshold_pct: threshold,
+      approval_required: Boolean(input.approval_required),
+      notify_email: input.notify_email || null,
+      active: input.active !== false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    state.budget_rules.push(record);
+    saveLocalState(state);
+    return { ...record };
+  }
+}
+
+export async function getBudgetRule(id: number): Promise<BudgetRule | null> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(`SELECT * FROM budget_rules WHERE id = $1 LIMIT 1`, [id]);
+    if (res.rows.length === 0) return null;
+    return mapBudgetRuleRows(res.rows)[0];
+  } else {
+    const state = getLocalState();
+    return (state.budget_rules || []).find((r: any) => Number(r.id) === id) || null;
+  }
+}
+
+/**
+ * Rules the given user can see: their own personal rules plus rules of every
+ * team they belong to.
+ */
+export async function getBudgetRulesForUser(email: string): Promise<BudgetRule[]> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT * FROM budget_rules
+       WHERE owner_email = $1
+          OR team_id IN (SELECT team_id FROM team_members WHERE member_email = $1)
+       ORDER BY active DESC, id DESC`,
+      [email]
+    );
+    return mapBudgetRuleRows(res.rows);
+  } else {
+    const state = getLocalState();
+    const teamIds = new Set(
+      (state.team_members || [])
+        .filter((m: any) => m.member_email === email)
+        .map((m: any) => Number(m.team_id))
+    );
+    return (state.budget_rules || [])
+      .filter((r: any) => r.owner_email === email || teamIds.has(Number(r.team_id)))
+      .map(mapBudgetRuleRow)
+      .sort((a: any, b: any) => Number(b.id) - Number(a.id));
+  }
+}
+
+export async function getBudgetRulesForTeam(teamId: number): Promise<BudgetRule[]> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT * FROM budget_rules WHERE team_id = $1 ORDER BY active DESC, id DESC`,
+      [teamId]
+    );
+    return mapBudgetRuleRows(res.rows);
+  } else {
+    const state = getLocalState();
+    return (state.budget_rules || [])
+      .filter((r: any) => Number(r.team_id) === teamId)
+      .map(mapBudgetRuleRow);
+  }
+}
+
+export async function getAllBudgetRules(limit = 200): Promise<BudgetRule[]> {
+  const max = Math.min(500, Math.max(1, Math.floor(limit)));
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT * FROM budget_rules ORDER BY active DESC, id DESC LIMIT $1`,
+      [max]
+    );
+    return mapBudgetRuleRows(res.rows);
+  } else {
+    const state = getLocalState();
+    return (state.budget_rules || [])
+      .sort((a: any, b: any) => Number(b.id) - Number(a.id))
+      .slice(0, max)
+      .map(mapBudgetRuleRow);
+  }
+}
+
+export async function recordBudgetAlert(alert: BudgetAlertRecord): Promise<BudgetAlertRecord> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `INSERT INTO budget_alerts
+        (rule_id, model_family, projected_monthly_usd, budget_usd, pct_used, alert_type, message)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        alert.rule_id ?? null,
+        alert.model_family ?? null,
+        alert.projected_monthly_usd,
+        alert.budget_usd,
+        alert.pct_used,
+        alert.alert_type,
+        alert.message,
+      ]
+    );
+    const r = res.rows[0];
+    return {
+      id: Number(r.id),
+      rule_id: r.rule_id !== null ? Number(r.rule_id) : undefined,
+      model_family: r.model_family,
+      projected_monthly_usd: Number(r.projected_monthly_usd),
+      budget_usd: Number(r.budget_usd),
+      pct_used: Number(r.pct_used),
+      alert_type: r.alert_type,
+      message: r.message,
+      acknowledged: Boolean(r.acknowledged),
+      created_at: r.created_at,
+    };
+  } else {
+    const state = getLocalState();
+    if (!state.budget_alerts) state.budget_alerts = [];
+    const record = {
+      id: state.budget_alerts.length + 1,
+      rule_id: alert.rule_id ?? undefined,
+      model_family: alert.model_family ?? null,
+      projected_monthly_usd: alert.projected_monthly_usd,
+      budget_usd: alert.budget_usd,
+      pct_used: alert.pct_used,
+      alert_type: alert.alert_type,
+      message: alert.message,
+      acknowledged: Boolean(alert.acknowledged),
+      created_at: new Date().toISOString(),
+    };
+    state.budget_alerts.push(record);
+    saveLocalState(state);
+    return { ...record };
+  }
+}
+
+export async function getBudgetAlerts(opts: {
+  ruleIds?: number[];
+  limit?: number;
+  sinceHours?: number;
+} = {}): Promise<BudgetAlertRecord[]> {
+  const limit = Math.min(200, Math.max(1, Math.floor(opts.limit ?? 50)));
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const where: string[] = [];
+    const params: any[] = [];
+    if (opts.ruleIds && opts.ruleIds.length > 0) {
+      params.push(opts.ruleIds);
+      where.push(`rule_id = ANY($${params.length}::int[])`);
+    }
+    if (opts.sinceHours && opts.sinceHours > 0) {
+      params.push(new Date(Date.now() - opts.sinceHours * 3600_000).toISOString());
+      where.push(`created_at >= $${params.length}`);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    params.push(limit);
+    const res = await pool.query(
+      `SELECT * FROM budget_alerts ${whereSql} ORDER BY created_at DESC LIMIT $${params.length}`,
+      params
+    );
+    return res.rows.map((r: any) => ({
+      id: Number(r.id),
+      rule_id: r.rule_id !== null ? Number(r.rule_id) : undefined,
+      model_family: r.model_family,
+      projected_monthly_usd: Number(r.projected_monthly_usd),
+      budget_usd: Number(r.budget_usd),
+      pct_used: Number(r.pct_used),
+      alert_type: r.alert_type,
+      message: r.message,
+      acknowledged: Boolean(r.acknowledged),
+      created_at: r.created_at,
+    }));
+  } else {
+    const state = getLocalState();
+    const since = opts.sinceHours && opts.sinceHours > 0
+      ? Date.now() - opts.sinceHours * 3600_000
+      : 0;
+    return (state.budget_alerts || [])
+      .filter((a: any) => !opts.ruleIds || opts.ruleIds.length === 0 || opts.ruleIds.includes(Number(a.rule_id)))
+      .filter((a: any) => new Date(a.created_at).getTime() >= since)
+      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, limit)
+      .map((a: any) => ({
+        ...a,
+        rule_id: a.rule_id !== null && a.rule_id !== undefined ? Number(a.rule_id) : undefined,
+      }));
+  }
+}
+
+export async function createMigrationApproval(input: {
+  team_id?: number | null;
+  rule_id?: number | null;
+  from_model_id: string;
+  to_model_id: string;
+  monthly_savings_usd: number;
+  requested_by: string;
+}): Promise<MigrationApproval> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `INSERT INTO migration_approvals
+        (team_id, rule_id, from_model_id, to_model_id, monthly_savings_usd, status, requested_by)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+       RETURNING *`,
+      [
+        input.team_id ?? null,
+        input.rule_id ?? null,
+        input.from_model_id,
+        input.to_model_id,
+        input.monthly_savings_usd,
+        input.requested_by,
+      ]
+    );
+    const r = res.rows[0];
+    return {
+      id: Number(r.id),
+      team_id: r.team_id !== null ? Number(r.team_id) : null,
+      rule_id: r.rule_id !== null ? Number(r.rule_id) : null,
+      from_model_id: r.from_model_id,
+      to_model_id: r.to_model_id,
+      monthly_savings_usd: Number(r.monthly_savings_usd),
+      status: r.status,
+      requested_by: r.requested_by,
+      reviewed_by: r.reviewed_by,
+      decision_at: r.decision_at,
+      created_at: r.created_at,
+    };
+  } else {
+    const state = getLocalState();
+    if (!state.migration_approvals) state.migration_approvals = [];
+    const record = {
+      id: state.migration_approvals.length + 1,
+      team_id: input.team_id ?? null,
+      rule_id: input.rule_id ?? null,
+      from_model_id: input.from_model_id,
+      to_model_id: input.to_model_id,
+      monthly_savings_usd: input.monthly_savings_usd,
+      status: 'pending' as const,
+      requested_by: input.requested_by,
+      reviewed_by: null,
+      decision_at: null,
+      created_at: new Date().toISOString(),
+    };
+    state.migration_approvals.push(record);
+    saveLocalState(state);
+    return { ...record };
+  }
+}
+
+export async function getMigrationApprovals(opts: {
+  teamId?: number;
+  status?: string;
+  ruleIds?: number[];
+  limit?: number;
+} = {}): Promise<MigrationApproval[]> {
+  const limit = Math.min(200, Math.max(1, Math.floor(opts.limit ?? 50)));
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const where: string[] = [];
+    const params: any[] = [];
+    if (opts.teamId !== undefined && opts.teamId !== null) {
+      params.push(opts.teamId);
+      where.push(`team_id = $${params.length}`);
+    }
+    if (opts.status) {
+      params.push(opts.status);
+      where.push(`status = $${params.length}`);
+    }
+    if (opts.ruleIds && opts.ruleIds.length > 0) {
+      params.push(opts.ruleIds);
+      where.push(`rule_id = ANY($${params.length}::int[])`);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    params.push(limit);
+    const res = await pool.query(
+      `SELECT * FROM migration_approvals ${whereSql} ORDER BY created_at DESC LIMIT $${params.length}`,
+      params
+    );
+    return res.rows.map((r: any) => ({
+      id: Number(r.id),
+      team_id: r.team_id !== null ? Number(r.team_id) : null,
+      rule_id: r.rule_id !== null ? Number(r.rule_id) : null,
+      from_model_id: r.from_model_id,
+      to_model_id: r.to_model_id,
+      monthly_savings_usd: Number(r.monthly_savings_usd),
+      status: r.status,
+      requested_by: r.requested_by,
+      reviewed_by: r.reviewed_by,
+      decision_at: r.decision_at,
+      created_at: r.created_at,
+    }));
+  } else {
+    const state = getLocalState();
+    return (state.migration_approvals || [])
+      .filter((a: any) => opts.teamId === undefined || opts.teamId === null || Number(a.team_id) === opts.teamId)
+      .filter((a: any) => !opts.status || a.status === opts.status)
+      .filter((a: any) => !opts.ruleIds || opts.ruleIds.length === 0 || opts.ruleIds.includes(Number(a.rule_id)))
+      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, limit)
+      .map((a: any) => ({ ...a }));
+  }
+}
+
+export async function decideMigrationApproval(
+  id: number,
+  decision: 'approved' | 'rejected',
+  reviewedBy: string
+): Promise<MigrationApproval | null> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `UPDATE migration_approvals
+       SET status = $2, reviewed_by = $3, decision_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id, decision, reviewedBy]
+    );
+    if (res.rows.length === 0) return null;
+    const r = res.rows[0];
+    return {
+      id: Number(r.id),
+      team_id: r.team_id !== null ? Number(r.team_id) : null,
+      rule_id: r.rule_id !== null ? Number(r.rule_id) : null,
+      from_model_id: r.from_model_id,
+      to_model_id: r.to_model_id,
+      monthly_savings_usd: Number(r.monthly_savings_usd),
+      status: r.status,
+      requested_by: r.requested_by,
+      reviewed_by: r.reviewed_by,
+      decision_at: r.decision_at,
+      created_at: r.created_at,
+    };
+  } else {
+    const state = getLocalState();
+    const match = (state.migration_approvals || []).find((a: any) => Number(a.id) === id);
+    if (!match) return null;
+    match.status = decision;
+    match.reviewed_by = reviewedBy;
+    match.decision_at = new Date().toISOString();
+    saveLocalState(state);
+    return { ...match };
+  }
 }
 
 

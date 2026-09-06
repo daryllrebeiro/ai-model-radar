@@ -42,21 +42,21 @@ describe('Phase 1: Tier-Based Feature Flag System', () => {
     expect(hasAccess('free', 'NOT_A_REAL_FEATURE' as any)).toBe(false);
   });
 
-  it('3. Feature inventory: 17 free, 12 pro, 7 enterprise (36 total)', () => {
+  it('3. Feature inventory: 17 free, 16 pro, 8 enterprise (41 total)', () => {
     const all = Object.values(FEATURES);
-    expect(all).toHaveLength(36);
+    expect(all).toHaveLength(41);
     expect(all.filter((f) => f.minTier === 'free')).toHaveLength(17);
-    expect(all.filter((f) => f.minTier === 'pro')).toHaveLength(12);
-    expect(all.filter((f) => f.minTier === 'enterprise')).toHaveLength(7);
+    expect(all.filter((f) => f.minTier === 'pro')).toHaveLength(16);
+    expect(all.filter((f) => f.minTier === 'enterprise')).toHaveLength(8);
   });
 
   it('4. getFeaturesForTier is inclusive of lower tiers; getLockedFeatures excludes them', () => {
     expect(getFeaturesForTier('free')).toHaveLength(17);
-    expect(getFeaturesForTier('pro')).toHaveLength(29);
-    expect(getFeaturesForTier('enterprise')).toHaveLength(36);
+    expect(getFeaturesForTier('pro')).toHaveLength(33);
+    expect(getFeaturesForTier('enterprise')).toHaveLength(41);
 
-    expect(getLockedFeatures('free')).toHaveLength(19);
-    expect(getLockedFeatures('pro')).toHaveLength(7);
+    expect(getLockedFeatures('free')).toHaveLength(24);
+    expect(getLockedFeatures('pro')).toHaveLength(8);
     expect(getLockedFeatures('enterprise')).toHaveLength(0);
   });
 
@@ -126,7 +126,7 @@ describe('Phase 1: RequireFeature Guard Wiring', () => {
     process.env.FEATURE_ENFORCEMENT = 'true';
     const email = `flag_pro_${Date.now()}@test.com`;
     const user = await createOrGetUser({ email, tier: 'pro' });
-    const { plaintextKey, keyRecord } = generateApiKey(user.email, 'pro');
+    const { plaintextKey, keyRecord } = generateApiKey(user.email, 'production');
     await createApiKey(keyRecord);
 
     const req = new NextRequest('http://localhost:3000/api/arbitrage', {

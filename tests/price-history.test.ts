@@ -113,7 +113,7 @@ describe('Phase 2.1: History API Endpoint', () => {
   it('6. History route rejects invalid range params gracefully with 200 (defaults to all)', async () => {
     const email = `hist_key_${Date.now()}@test.com`;
     const user = await createOrGetUser({ email, tier: 'pro' });
-    const { plaintextKey, keyRecord } = generateApiKey(user.email, 'pro');
+    const { plaintextKey, keyRecord } = generateApiKey(user.email, 'production');
     await createApiKey(keyRecord);
 
     const req = new NextRequest(
@@ -175,7 +175,7 @@ describe('Phase 2.1: History API Endpoint', () => {
     expect(freeRes.status).toBe(403);
 
     const proUser = await createOrGetUser({ email: `hist_pro_${Date.now()}@test.com`, tier: 'pro' });
-    const proKey = generateApiKey(proUser.email, 'pro');
+    const proKey = generateApiKey(proUser.email, 'production');
     await createApiKey(proKey.keyRecord);
 
     const proReq = new NextRequest(

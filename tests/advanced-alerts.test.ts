@@ -170,7 +170,7 @@ describe('Phase 2.6: Advanced Alert Rules (Pro)', () => {
     process.env.FEATURE_ENFORCEMENT = 'true';
     const email = `adv_pro_${Date.now()}@test.com`;
     const user = await createOrGetUser({ email, tier: 'pro' });
-    const { plaintextKey, keyRecord } = generateApiKey(email, 'pro');
+    const { plaintextKey, keyRecord } = generateApiKey(email, 'production');
     await createApiKey(keyRecord);
 
     const req = new NextRequest('http://localhost:3000/api/v1/alerts/evaluate', {

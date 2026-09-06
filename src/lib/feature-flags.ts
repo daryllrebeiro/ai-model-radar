@@ -41,7 +41,10 @@ export const FEATURES = {
   PRICE_ALERTS_EMAIL:     { key: 'price_alerts_email',     minTier: 'pro',        label: 'Email Digests' },
   ADVANCED_ALERT_RULES:   { key: 'advanced_alert_rules',   minTier: 'pro',        label: 'Advanced Alert Rules' },
   PRICE_HISTORY_CHARTS:   { key: 'price_history_charts',   minTier: 'pro',        label: 'Price History Charts' },
+  PRICE_FORECAST:         { key: 'price_forecast',         minTier: 'pro',        label: 'Price Drop Forecasts' },
   COST_OPTIMIZER:         { key: 'cost_optimizer',         minTier: 'pro',        label: 'Cost Optimizer' },
+  MIGRATION:              { key: 'migration_savings',      minTier: 'pro',        label: 'Migration Savings' },
+  APT_PROBE:              { key: 'endpoint_probes',        minTier: 'pro',        label: 'Live Endpoint Probes' },
   ARBITRAGE_ANALYTICS:    { key: 'arbitrage_analytics',    minTier: 'pro',        label: 'Arbitrage Analytics' },
   MARKET_SIGNALS:         { key: 'market_signals',         minTier: 'pro',        label: 'Market Signals' },
   API_KEY_MANAGEMENT:     { key: 'api_key_management',     minTier: 'pro',        label: 'API Key Dashboard' },
@@ -49,6 +52,7 @@ export const FEATURES = {
   DATA_EXPORT:            { key: 'data_export',            minTier: 'pro',        label: 'Data Export' },
   UNLIMITED_WATCHLISTS:   { key: 'unlimited_watchlists',   minTier: 'pro',        label: 'Unlimited Watchlists' },
   CUSTOM_BRAND_BADGES:    { key: 'custom_brand_badges',    minTier: 'pro',        label: 'Custom Badge Branding' },
+  ASK_RADAR:              { key: 'ask_radar',              minTier: 'pro',        label: 'Ask the Radar' },
 
   // ─── ENTERPRISE TIER ($199/mo) ──────────────────────────────
   REALTIME_STREAM:        { key: 'realtime_stream',        minTier: 'enterprise', label: 'Real-time Stream' },
@@ -58,6 +62,7 @@ export const FEATURES = {
   BULK_API_ACCESS:        { key: 'bulk_api_access',        minTier: 'enterprise', label: 'Bulk API Access' },
   TEAM_MANAGEMENT:        { key: 'team_management',        minTier: 'enterprise', label: 'Team Workspaces' },
   WHITE_LABEL_BADGES:     { key: 'white_label_badges',     minTier: 'enterprise', label: 'White-label Badges' },
+  GOVERNANCE:             { key: 'budget_governance',      minTier: 'enterprise', label: 'Budget Governance' },
 } as const;
 
 export type FeatureKey = keyof typeof FEATURES;

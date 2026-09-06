@@ -16,10 +16,15 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import {
   mcpArbitrage,
+  mcpAskRadar,
+  mcpEndpointTelemetry,
   mcpEolModels,
+  mcpForecast,
   mcpGetModel,
+  mcpGovernanceStatus,
   mcpListModels,
   mcpMarketStats,
+  mcpMigrationRecommendation,
   mcpPriceHistory,
   mcpRecentEvents,
   mcpSignals,
@@ -112,6 +117,68 @@ function buildServer(): McpServer {
     'Aggregate market snapshot: total active models, providers, free models, and recent price-drop/new-model counts.',
     {},
     async () => textContent((await mcpMarketStats()).data)
+  );
+
+  server.tool(
+    'get_forecast',
+    'RadarForecast: statistically predicted price cuts per model — probability, expected window in days, typical cut magnitude, and supporting evidence.',
+    {
+      minProbability: z.number().min(0).max(1).optional().describe('Only return forecasts at or above this probability (default 0.35).'),
+      limit: z.number().int().min(1).max(50).optional().describe('Maximum number of forecasts (default 15).'),
+    },
+    async ({ minProbability, limit }) => textContent((await mcpForecast({ limit, minProbability })).data)
+  );
+
+  server.tool(
+    'get_migration_recommendation',
+    'Usage-aware "switch and save $N/mo" recommendations: given your monthly token volumes and primary model, returns ranked cheaper alternatives with EOL/forecast risk factors.',
+    {
+      primaryModelId: z.string().describe('The model id you currently use most, e.g. anthropic/claude-3-7-sonnet.'),
+      monthlyPromptTokens: z.number().nonnegative().describe('Monthly prompt (input) tokens across your whole workload.'),
+      monthlyCompTokens: z.number().nonnegative().describe('Monthly completion (output) tokens across your whole workload.'),
+      cacheHitRatio: z.number().min(0).max(1).optional().describe('Fraction of prompt tokens served from provider prompt cache (default 0).'),
+      batchDiscount: z.number().min(0).max(1).optional().describe('Batch API discount fraction, e.g. 0.5 = 50% off (default 0).'),
+    },
+    async (args) => textContent((await mcpMigrationRecommendation(args)).data)
+  );
+
+  server.tool(
+    'get_endpoint_telemetry',
+    'Live endpoint intelligence: P95 latency, estimated tokens/sec, 429 rate-limiting and free-tier availability per tracked endpoint, with a healthy/degraded/down classification.',
+    {
+      modelId: z.string().optional().describe('Only return telemetry for this model id.'),
+      provider: z.string().optional().describe('Filter by provider.'),
+      degradedOnly: z.boolean().optional().describe('Only return degraded or down endpoints.'),
+      limit: z.number().int().min(1).max(200).optional().describe('Maximum number of records (default 50).'),
+    },
+    async ({ modelId, provider, degradedOnly, limit }) => textContent((await mcpEndpointTelemetry({ modelId, provider, limit, degradedOnly })).data)
+  );
+
+  server.tool(
+    'get_budget_status',
+    'Budget governance: per-rule projected monthly spend vs budget (ok/approaching/over), "shadow AI" spend on untracked endpoints, and pending migration-switch approvals.',
+    {
+      email: z.string().email().optional().describe('Restrict to rules owned by or scoped to this user (default: all rules).'),
+      limit: z.number().int().min(1).max(100).optional().describe('Max families/findings (default 20).'),
+    },
+    async (args) => textContent((await mcpGovernanceStatus(args)).data)
+  );
+
+  server.tool(
+    'ask_radar',
+    'Ask the Radar: conversational Q&A over the full radar dataset — snapshots, changelog events, signals, forecasts and live endpoint telemetry. Deterministic retrieval with citations that resolve back to the cited records. Optionally pass a usage profile for "how can I save money / what should I switch to" questions.',
+    {
+      question: z.string().min(3).describe('Natural-language question, e.g. "which models are due for a price cut?" or "is openai/gpt-4o healthy right now?".'),
+      primaryModelId: z.string().optional().describe('Your primary model id, for migration/savings questions.'),
+      monthlyPromptTokens: z.number().nonnegative().optional().describe('Your monthly prompt tokens, for migration/savings questions.'),
+      monthlyCompTokens: z.number().nonnegative().optional().describe('Your monthly completion tokens, for migration/savings questions.'),
+    },
+    async (args) => textContent((await mcpAskRadar({
+      question: args.question,
+      primary_model_id: args.primaryModelId,
+      monthly_prompt_tokens: args.monthlyPromptTokens,
+      monthly_comp_tokens: args.monthlyCompTokens,
+    })).data)
   );
 
   server.registerResource(

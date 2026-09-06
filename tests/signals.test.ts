@@ -244,7 +244,7 @@ describe('Phase 2.3: Enhanced Market Signals (Pro)', () => {
   it('8. Returns a sorted-by-strength signals list from the API endpoint', async () => {
     const email = `signal_api_${Date.now()}@test.com`;
     const user = await createOrGetUser({ email, tier: 'pro' });
-    const { plaintextKey, keyRecord } = generateApiKey(user.email, 'pro');
+    const { plaintextKey, keyRecord } = generateApiKey(user.email, 'production');
     await createApiKey(keyRecord);
 
     const req = new NextRequest('http://localhost:3000/api/v1/signals?limit=5', {

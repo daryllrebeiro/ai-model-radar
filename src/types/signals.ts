@@ -6,7 +6,8 @@ export type MarketSignalType =
   | 'FREE_GRADIENT'
   | 'CONTEXT_EXPANSION'
   | 'SECTOR_PRICE_WAR'
-  | 'MODEL_EOL';
+  | 'MODEL_EOL'
+  | 'PRICE_DROP_EXPECTED';
 
 export interface MarketSignal {
   id: string;

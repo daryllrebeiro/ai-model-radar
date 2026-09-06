@@ -1,4 +1,5 @@
 import { ModelEvent } from './events';
+import { EndpointTelemetry } from './telemetry';
 
 export interface AlertRuleConfig {
   minPriceDropPct: number; // e.g. 20 (alert if drop >= 20%)
@@ -39,4 +40,23 @@ export interface GeneratedDigest {
   freeTierEvents: ModelEvent[];
   newModelEvents: ModelEvent[];
   otherEvents: ModelEvent[];
+}
+
+export interface EndpointAlertRuleConfig {
+  maxP95LatencyMs?: number; // e.g. 8000 — alert when P95 latency exceeds this
+  maxRateLimitedPct?: number; // e.g. 0.5 — alert when ≥50% of probes are 429s
+  providers?: string[]; // optional provider allowlist
+  watchFreeTier?: boolean; // default true — surface free-tier outages
+  minSeverity?: 'degraded' | 'down'; // default 'degraded'
+}
+
+export interface EndpointAlert {
+  record: EndpointTelemetry;
+  severity: 'degraded' | 'down';
+  reasons: string[];
+}
+
+export interface EndpointAlertResult {
+  alerts: EndpointAlert[];
+  total: number;
 }

@@ -16,6 +16,11 @@ const VALID_TABLES = new Set([
   'teams',
   'team_members',
   'team_watchlists',
+  'usage_profiles',
+  'endpoint_telemetry',
+  'budget_rules',
+  'budget_alerts',
+  'migration_approvals',
   // Local file state keys (used by backup-db.ts in local mode)
   'snapshots',
   'events',

@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { ModelEvent } from '@/types/events';
+import { PriceDropForecast } from '@/types/forecast';
+import { MarketBrief } from '@/types/ask';
 import { logger } from '../logger';
 
 const UNSUBSCRIBE_SECRET = process.env.UNSUBSCRIBE_SECRET || 'amr_unsubscribe_secret_default';
@@ -31,6 +33,14 @@ export interface DigestContentOptions {
   timeframe: 'daily' | 'weekly';
   watchlistModelIds?: string[];
   baseUrl?: string;
+  forecasts?: PriceDropForecast[];
+  savings?: {
+    monthly_usd: number;
+    model_name: string;
+    model_id: string;
+    compare_url: string;
+  };
+  briefs?: MarketBrief[];
 }
 
 /**
@@ -42,6 +52,9 @@ export function renderDigestHtml({
   timeframe,
   watchlistModelIds = [],
   baseUrl = 'https://ai-model-radar.com',
+  forecasts = [],
+  savings,
+  briefs = [],
 }: DigestContentOptions): string {
   const token = generateUnsubscribeToken(recipientEmail);
   const unsubscribeUrl = `${baseUrl}/api/alerts/unsubscribe?email=${encodeURIComponent(
@@ -159,6 +172,73 @@ export function renderDigestHtml({
         </div>`
         )
         .join('')}
+    </div>`
+        : ''
+    }
+
+    ${
+      forecasts.length > 0
+        ? `
+    <div class="section" style="background-color: #0F172A; border-left: 4px solid #F59E0B;">
+      <div class="section-title" style="color: #FBBF24;">⏳ RadarForecast: Price Cuts Likely Soon</div>
+      ${forecasts
+        .slice(0, 4)
+        .map(
+          (f) => `
+        <div class="event-card" style="background-color: #1C1917; border-color: #B45309;">
+          <div class="model-name" style="color: #FCD34D;">${f.model_name || f.model_id}</div>
+          <div style="font-size: 12px; color: #FBBF24; margin-top: 4px;">
+            ${Math.round(f.probability * 100)}% likely within ${f.expected_window_days}d
+            ${f.expected_pct_change !== null ? `&bull; typical cut ≈ ${f.expected_pct_change}%` : ''}
+            &bull; Provider: ${f.provider}
+          </div>
+        </div>`
+        )
+        .join('')}
+    </div>`
+        : ''
+    }
+
+    ${
+      savings && savings.monthly_usd > 0
+        ? `
+    <div style="background-color: #064E3B; border-left: 4px solid #22C55E; padding: 14px 18px; border-radius: 10px; margin: 12px 0;">
+      <strong style="color: #4ADE80;">💸 You could have saved $${savings.monthly_usd.toLocaleString()} this month</strong>
+      <span style="color: #A7F3D0; font-size: 13px;"> — switching your workload to <strong>${savings.model_name}</strong> would cut ~$${savings.monthly_usd.toLocaleString()}/mo.</span>
+      <br /><a href="${baseUrl}${savings.compare_url}" style="color: #4ADE80; font-size: 12px;">Compare your options</a>
+    </div>`
+        : ''
+    }
+
+    ${
+      briefs.length > 0
+        ? `
+    <div class="section" style="background-color: #0A1628; border-left: 4px solid #38BDF8;">
+      <div class="section-title" style="color: #38BDF8;">📊 Your Market Brief (last ${briefs[0].window_days}d)</div>
+    ${briefs
+      .slice(0, 3)
+      .map(
+        (b) => `
+    <div style="background-color: #111827; border: 1px solid #334155; border-radius: 10px; padding: 12px 16px; margin: 8px 0;">
+      <div class="model-name" style="font-size: 14px;">${b.headline}</div>
+      <div style="font-size: 12px; color: #94A3B8; margin-top: 4px;">
+        ${b.models
+          .filter((m) => m.window_pct_change !== null || m.became_free || m.eol || m.forecast_probability !== null)
+          .slice(0, 3)
+          .map((m) => {
+            const bits: string[] = [];
+            if (m.window_pct_change !== null) bits.push(`${m.window_pct_change > 0 ? '+' : ''}${m.window_pct_change}% ${m.window_pct_change < 0 ? 'drop' : 'rise'}`);
+            if (m.became_free) bits.push('now free');
+            if (m.eol) bits.push('EOL warning');
+            if (m.forecast_probability !== null) bits.push(`${Math.round(m.forecast_probability * 100)}% cut expected`);
+            return `${m.name}: ${bits.join(' · ') || 'tracked'}`;
+          })
+          .join('<br />')}
+      </div>
+      <a href="${baseUrl}/ask" style="color: #38BDF8; font-size: 12px;">Ask the Radar for a full breakdown →</a>
+    </div>`
+      )
+      .join('')}
     </div>`
         : ''
     }

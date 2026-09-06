@@ -160,3 +160,98 @@ CREATE TABLE IF NOT EXISTS team_watchlists (
 );
 
 CREATE INDEX IF NOT EXISTS idx_team_watchlists_team ON team_watchlists(team_id);
+
+-- 10. Usage Profiles (Pro) — workload definition powering migration savings
+CREATE TABLE IF NOT EXISTS usage_profiles (
+    id                  SERIAL PRIMARY KEY,
+    email               VARCHAR(255) UNIQUE NOT NULL REFERENCES users(email),
+    monthly_prompt_tokens BIGINT NOT NULL DEFAULT 0,
+    monthly_comp_tokens   BIGINT NOT NULL DEFAULT 0,
+    cache_hit_ratio     NUMERIC(4,3) NOT NULL DEFAULT 0,
+    batch_discount      NUMERIC(4,3) NOT NULL DEFAULT 0,
+    primary_model_id    TEXT NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_profiles_email ON usage_profiles(email);
+
+-- 11. Endpoint Probe Telemetry (Pro) — live reliability & latency measurements
+CREATE TABLE IF NOT EXISTS endpoint_telemetry (
+    id                  BIGSERIAL PRIMARY KEY,
+    model_id            TEXT NOT NULL,
+    provider            TEXT NOT NULL,
+    endpoint_url        TEXT,
+    checked_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    online              BOOLEAN NOT NULL DEFAULT FALSE,
+    http_status         INTEGER,
+    p95_latency_ms      NUMERIC(10, 2),
+    avg_latency_ms      NUMERIC(10, 2),
+    tokens_per_sec      NUMERIC(10, 2),
+    rate_limited        BOOLEAN NOT NULL DEFAULT FALSE,
+    rate_limited_count  INTEGER NOT NULL DEFAULT 0,
+    retry_after_sec     INTEGER,
+    sample_count        INTEGER NOT NULL DEFAULT 0,
+    is_free             BOOLEAN NOT NULL DEFAULT FALSE,
+    free_tier_active    BOOLEAN,
+    error               TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_endpoint_telemetry_model_time ON endpoint_telemetry (model_id, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_endpoint_telemetry_checked_at ON endpoint_telemetry (checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_endpoint_telemetry_provider ON endpoint_telemetry (provider);
+
+-- 12. Budget Governance Rules (Enterprise) — per-scope spend guardrails
+CREATE TABLE IF NOT EXISTS budget_rules (
+    id                      SERIAL PRIMARY KEY,
+    name                    VARCHAR(160) NOT NULL,
+    scope                   VARCHAR(20) NOT NULL DEFAULT 'personal',  -- 'personal' | 'team'
+    team_id                 INT REFERENCES teams(id) ON DELETE CASCADE,
+    owner_email             VARCHAR(255) NOT NULL REFERENCES users(email),
+    monthly_budget_usd      NUMERIC(12, 2) NOT NULL CHECK (monthly_budget_usd > 0),
+    alert_threshold_pct     NUMERIC(4, 3) NOT NULL DEFAULT 0.80,
+    approval_required       BOOLEAN NOT NULL DEFAULT FALSE,
+    notify_email            VARCHAR(255),
+    active                  BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_budget_rules_owner ON budget_rules(owner_email);
+CREATE INDEX IF NOT EXISTS idx_budget_rules_team ON budget_rules(team_id);
+CREATE INDEX IF NOT EXISTS idx_budget_rules_active ON budget_rules(active);
+
+-- 13. Budget Alert Emissions Log (Enterprise)
+CREATE TABLE IF NOT EXISTS budget_alerts (
+    id                      BIGSERIAL PRIMARY KEY,
+    rule_id                 INT REFERENCES budget_rules(id) ON DELETE CASCADE,
+    model_family            TEXT,
+    projected_monthly_usd   NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    budget_usd              NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    pct_used                NUMERIC(6, 4) NOT NULL DEFAULT 0,
+    alert_type              VARCHAR(20) NOT NULL,  -- 'threshold' | 'over_budget' | 'shadow_ai'
+    message                 TEXT NOT NULL,
+    acknowledged            BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_budget_alerts_rule_time ON budget_alerts (rule_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_budget_alerts_type ON budget_alerts (alert_type, created_at DESC);
+
+-- 14. Migration Switch Approvals (Enterprise) — guardrail over F3 recommendations
+CREATE TABLE IF NOT EXISTS migration_approvals (
+    id                      BIGSERIAL PRIMARY KEY,
+    team_id                 INT REFERENCES teams(id) ON DELETE CASCADE,
+    rule_id                 INT REFERENCES budget_rules(id) ON DELETE CASCADE,
+    from_model_id           TEXT NOT NULL,
+    to_model_id             TEXT NOT NULL,
+    monthly_savings_usd     NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    status                  VARCHAR(20) NOT NULL DEFAULT 'pending',  -- 'pending' | 'approved' | 'rejected'
+    requested_by            VARCHAR(255) NOT NULL,
+    reviewed_by             VARCHAR(255),
+    decision_at             TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_migration_approvals_status ON migration_approvals (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_migration_approvals_team ON migration_approvals (team_id);

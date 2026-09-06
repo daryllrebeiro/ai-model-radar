@@ -45,6 +45,11 @@ interface LocalDbState {
   teams: Array<any>;
   team_members: Array<any>;
   team_watchlists: Array<any>;
+  usage_profiles: Array<any>;
+  endpoint_telemetry: Array<any>;
+  budget_rules: Array<any>;
+  budget_alerts: Array<any>;
+  migration_approvals: Array<any>;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
@@ -63,6 +68,11 @@ function getLocalState(): LocalDbState {
       teams: [],
       team_members: [],
       team_watchlists: [],
+      usage_profiles: [],
+      endpoint_telemetry: [],
+      budget_rules: [],
+      budget_alerts: [],
+      migration_approvals: [],
     };
     fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(initial, null, 2), 'utf-8');
     return initial;
@@ -82,6 +92,11 @@ function getLocalState(): LocalDbState {
       teams: parsed.teams || [],
       team_members: parsed.team_members || [],
       team_watchlists: parsed.team_watchlists || [],
+      usage_profiles: parsed.usage_profiles || [],
+      endpoint_telemetry: parsed.endpoint_telemetry || [],
+      budget_rules: parsed.budget_rules || [],
+      budget_alerts: parsed.budget_alerts || [],
+      migration_approvals: parsed.migration_approvals || [],
     };
   } catch {
     return {
@@ -96,6 +111,11 @@ function getLocalState(): LocalDbState {
       teams: [],
       team_members: [],
       team_watchlists: [],
+      usage_profiles: [],
+      endpoint_telemetry: [],
+      budget_rules: [],
+      budget_alerts: [],
+      migration_approvals: [],
     };
   }
 }

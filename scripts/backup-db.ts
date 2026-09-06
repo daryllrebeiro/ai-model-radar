@@ -29,7 +29,7 @@ export async function createDatabaseBackup(outputDir = path.join(process.cwd(), 
 
   if (isPostgres()) {
     const pool = getPgPool();
-    const tables = ['model_snapshots', 'model_events', 'ingestion_runs', 'api_keys', 'users', 'user_watchlists'];
+    const tables = ['model_snapshots', 'model_events', 'ingestion_runs', 'api_keys', 'users', 'user_watchlists', 'endpoint_telemetry', 'budget_rules', 'budget_alerts', 'migration_approvals'];
     for (const table of tables) {
       try {
         const res = await pool.query(`SELECT * FROM ${table}`);

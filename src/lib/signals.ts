@@ -1,6 +1,7 @@
 import { MarketSignal } from '@/types/signals';
 import { ModelSnapshot } from '@/types/models';
 import { ModelEvent } from '@/types/events';
+import { getPriceDropForecasts } from './forecast';
 
 export interface RobustDeviationStats {
   median: number;
@@ -345,6 +346,31 @@ export function detectMarketSignals(
       detected_at: removedAt,
       severity: daysSinceRemoval >= 7 ? 'high' : daysSinceRemoval >= 2 ? 'medium' : 'info',
     }, 0));
+  }
+
+  // 9. PRICE_DROP_EXPECTED — statistically probable price cut within the window
+  const forecasts = getPriceDropForecasts(snapshots, events, { minProbability: 0.5, maxForecasts: 6 });
+  for (const f of forecasts) {
+    signals.push(withStrength({
+      id: `sig-forecast-${f.model_id.replace(/[^a-zA-Z0-9-]/g, '-')}`,
+      signal_type: 'PRICE_DROP_EXPECTED',
+      model_id: f.model_id,
+      provider: f.provider,
+      title: `Price Cut Likely: ${f.model_name} (${Math.round(f.probability * 100)}% within ${f.expected_window_days}d)`,
+      summary:
+        `Forecast based on ${f.cadence_samples} historical gap observations for the ${f.family} line: ` +
+        (f.days_since_last_cut !== null
+          ? `last cut ${f.days_since_last_cut}d ago vs median cadence ${f.cadence_days ?? 'n/a'}d.`
+          : `no cuts observed yet; ${f.model_age_days ?? 'n/a'}d old vs median first-cut gap ${f.cadence_days ?? 'n/a'}d.`),
+      evidence: {
+        metric: 'Predicted Price Cut Probability',
+        current_value: `${Math.round(f.probability * 100)}% within ${f.expected_window_days}d`,
+        baseline_value: `Line cadence: ${f.cadence_days ?? 'n/a'}d median (${f.cadence_samples} observations)`,
+        deviation: f.expected_pct_change !== null ? `typical cut ≈ ${f.expected_pct_change}%` : 'cut magnitude unknown',
+      },
+      detected_at: new Date().toISOString(),
+      severity: f.probability >= 0.75 ? 'high' : f.probability >= 0.55 ? 'medium' : 'info',
+    }, Math.round(f.probability * 20)));
   }
 
   return signals;
