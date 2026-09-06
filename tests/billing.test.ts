@@ -4,7 +4,7 @@ import {
   verifyStripeWebhookSignature,
   BILLING_PLANS,
 } from '../src/lib/billing/stripe';
-import { createOrGetUser, getUserByEmail, updateUserTier } from '../src/lib/db/queries';
+import { createOrGetUser, updateUserTier } from '../src/lib/db/queries';
 import crypto from 'crypto';
 
 describe('Phase P7: Stripe Billing & Subscription Management', () => {

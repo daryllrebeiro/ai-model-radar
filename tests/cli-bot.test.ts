@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { parseArgs, resolveApiKey, resolveEndpoint } from '../src/cli/index';
+import { describe, it, expect } from 'vitest';
+import { parseArgs, resolveApiKey } from '../src/cli/index';
 import { POST } from '../src/app/api/bot/slash/route';
 import { NextRequest } from 'next/server';
 import { trackEvent, getServerEventCounts } from '../src/lib/analytics';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getModelDetail, getModelCurrentList } from '../src/lib/db/queries';
+import { getModelCurrentList } from '../src/lib/db/queries';
 import { RAW_BENCHMARK_DATA } from '../src/lib/benchmarks';
 import { computeArbitrageOpportunities } from '../src/lib/arbitrage';
 import { trackEvent, getServerEventCounts } from '../src/lib/analytics';

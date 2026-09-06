@@ -11,13 +11,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-and-build:
-    name: Test & Build (Node ${{ matrix.node-version }})
+  typecheck:
+    name: Typecheck (src + tests, zero drift)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck entire repo (tests included — no accepted drift)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  lint:
+    name: ESLint (zero errors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint src, scripts and tests
+        run: npx eslint src scripts tests
+
+  test:
+    name: Tests (${{ matrix.db-mode }}, Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
+      fail-fast: true
       matrix:
         node-version: [18.x, 20.x]
+        # Both persistence backends run the full suite: local-only runs mask
+        # Postgres-only failures (e.g. price-history ranges) and vice versa.
+        db-mode: [local, postgres]
 
     services:
       postgres:
@@ -47,7 +91,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Initialize test database schema
+      - name: Initialize test database schema (postgres mode only)
+        if: matrix.db-mode == 'postgres'
         run: npm run db:init
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_model_radar_test
@@ -56,15 +101,33 @@ jobs:
       - name: Run Vitest unit tests
         run: npm test
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_model_radar_test
+          DATABASE_URL: ${{ matrix.db-mode == 'postgres' && 'postgresql://postgres:postgres@localhost:5432/ai_model_radar_test' || '' }}
           NODE_ENV: test
           ADMIN_SECRET: test-admin-secret
 
-      - name: Cleanup test database
-        if: always()
+      - name: Cleanup test database (postgres mode only)
+        if: always() && matrix.db-mode == 'postgres'
         run: |
           PGPASSWORD=postgres psql -h localhost -U postgres -d ai_model_radar_test \
-            -c "TRUNCATE model_snapshots, model_events, ingestion_runs, api_keys, digest_deliveries, users, user_watchlists, alert_rules, schema_migrations CASCADE;"
+            -c "TRUNCATE model_snapshots, model_events, ingestion_runs, api_keys, digest_deliveries, users, user_watchlists, alert_rules, teams, team_members, team_watchlists, usage_profiles, endpoint_telemetry, budget_rules, budget_alerts, migration_approvals, schema_migrations CASCADE;"
+
+  build:
+    name: Next.js production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [typecheck, lint, test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run Next.js production build
         run: npm run build

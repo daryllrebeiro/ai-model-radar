@@ -109,7 +109,6 @@ describe('Phase 2.2: Cost Model (Cache Hit / Batch Discount)', () => {
     const base = calculateStackAdvice(workload, mockSnapshots);
     const optimized = calculateStackAdvice(workload, mockSnapshots, { cacheHitRatio: 1, batchDiscount: 0.5, confidenceBand: 0.15 });
 
-    const basePerf = base.recommendations.find((r) => r.tier === 'performance')!;
     const optPerf = optimized.recommendations.find((r) => r.tier === 'performance')!;
 
     // Effective prompt price must drop below the face $3/1M

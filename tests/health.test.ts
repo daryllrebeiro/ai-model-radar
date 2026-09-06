@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { recordIngestionRun, getLatestIngestionRuns } from '../src/lib/db/queries';
 import { StructuredLogger } from '../src/lib/logger';
 import { captureException } from '../src/lib/errors';

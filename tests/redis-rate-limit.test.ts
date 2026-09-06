@@ -2,24 +2,23 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   createRateLimiter,
   UpstashRedisRateLimiter,
-  validatePublicApiRequest,
 } from '../src/lib/api-auth';
-import { NextRequest } from 'next/server';
 
 describe('Phase P6.2: Upstash Redis Rate Limiting & Fail-Loud Safety', () => {
   it('1. Throws fatal exception on startup in production when Upstash Redis env vars are missing', () => {
-    const prevEnv = process.env.NODE_ENV;
     const prevUrl = process.env.UPSTASH_REDIS_REST_URL;
     const prevToken = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-    try {
-      process.env.NODE_ENV = 'production';
-      delete process.env.UPSTASH_REDIS_REST_URL;
-      delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    // vi.stubEnv instead of direct assignment: process.env.NODE_ENV is
+    // readonly under current @types/node, and stubEnv restores cleanly.
+    vi.stubEnv('NODE_ENV', 'production');
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
+    try {
       expect(() => createRateLimiter()).toThrowError(/UPSTASH_REDIS_REST_URL/);
     } finally {
-      process.env.NODE_ENV = prevEnv;
+      vi.unstubAllEnvs();
       if (prevUrl) process.env.UPSTASH_REDIS_REST_URL = prevUrl;
       if (prevToken) process.env.UPSTASH_REDIS_REST_TOKEN = prevToken;
     }
@@ -58,8 +57,7 @@ describe('Phase P6.2: Upstash Redis Rate Limiting & Fail-Loud Safety', () => {
   });
 
   it('3. Fails closed in production on Redis network outage to prevent unthrottled traffic flood', async () => {
-    const prevEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
 
     const failingFetch = vi.fn().mockRejectedValue(new Error('Network connection timeout to Redis'));
     const redisLimiter = new UpstashRedisRateLimiter(
@@ -73,7 +71,7 @@ describe('Phase P6.2: Upstash Redis Rate Limiting & Fail-Loud Safety', () => {
       expect(result.allowed).toBe(false);
       expect(result.remaining).toBe(0);
     } finally {
-      process.env.NODE_ENV = prevEnv;
+      vi.unstubAllEnvs();
     }
   });
 });

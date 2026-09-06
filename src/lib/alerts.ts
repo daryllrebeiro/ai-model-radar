@@ -36,10 +36,14 @@ function isFamousFamily(modelId: string): boolean {
 /**
  * Advanced (Pro) alert rule engine: applies compound criteria beyond the
  * basic boolean switches and returns a relevance score per matching event.
+ *
+ * Takes a partial config: only the advanced compound criteria are read here
+ * (all optional); base switches belong to evaluateAlertRules. Callers may
+ * pass `{ mode: 'basic' }` alone to get ranked pass-through results.
  */
 export function evaluateAdvancedAlertRules(
   events: ModelEvent[],
-  config: AlertRuleConfig,
+  config: Partial<AlertRuleConfig>,
   watchedModelIds: Set<string> = new Set()
 ): AdvancedAlertResult {
   const scored: AlertScore[] = [];

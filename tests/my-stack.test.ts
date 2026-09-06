@@ -15,6 +15,7 @@ describe('Phase Q2: Personalized Home & Digest ("My Stack")', () => {
       new_value: { price_prompt: 0.000002 },
       diff_summary: { price_prompt_delta: -0.000001 },
       pct_change: -33.3,
+      source: 'openrouter',
       detected_at: new Date().toISOString(),
     },
     {
@@ -27,6 +28,7 @@ describe('Phase Q2: Personalized Home & Digest ("My Stack")', () => {
       new_value: { context_length: 200000 },
       diff_summary: { context_length_delta: 72000 },
       pct_change: 56.2,
+      source: 'openrouter',
       detected_at: new Date().toISOString(),
     },
     {
@@ -39,6 +41,7 @@ describe('Phase Q2: Personalized Home & Digest ("My Stack")', () => {
       new_value: { is_free: true },
       diff_summary: null,
       pct_change: null,
+      source: 'openrouter',
       detected_at: new Date().toISOString(),
     },
   ];

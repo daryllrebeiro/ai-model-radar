@@ -15,6 +15,8 @@ export interface ModelEvent {
   pct_change: number | null;
   source: string;
   detected_at: string;
+  // Optional human-readable field deltas attached by the diff engine / tests
+  diff_summary?: Record<string, any> | null;
   // Joined fields for rich UI display
   model_name?: string;
   provider?: string;
