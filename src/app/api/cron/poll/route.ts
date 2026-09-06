@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runIngestionCycle } from '@/lib/ingestion/runner';
+import { secretsEqual } from '@/lib/secrets';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Allow full runtime for serverless execution
@@ -16,8 +17,8 @@ async function handlePoll(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  // If CRON_SECRET is configured, enforce bearer token
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  // If CRON_SECRET is configured, enforce bearer token (constant-time compare)
+  if (cronSecret && !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

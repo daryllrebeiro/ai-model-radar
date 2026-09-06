@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getLatestSnapshotsMap } from '@/lib/db/queries';
 import { runEndpointProbes } from '@/lib/probe';
+import { secretsEqual } from '@/lib/secrets';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -28,7 +29,7 @@ async function handleProbes(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (cronSecret && !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

@@ -5,6 +5,7 @@ import { getPriceDropForecasts } from '@/lib/forecast';
 import { detectMarketSignals } from '@/lib/signals';
 import { maxMonthlySavingsForProfile } from '@/lib/recommendation';
 import { buildMarketBrief } from '@/lib/briefs';
+import { secretsEqual } from '@/lib/secrets';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -21,7 +22,7 @@ async function handleDigest(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (cronSecret && !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

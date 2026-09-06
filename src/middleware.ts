@@ -1,5 +1,6 @@
 import { withAuth } from 'next-auth/middleware';
 import { NextResponse } from 'next/server';
+import { secretsEqual } from './lib/secrets';
 
 export default withAuth(
   function middleware(_req) {
@@ -13,7 +14,8 @@ export default withAuth(
         // Admin routes: allow if session exists OR x-admin-secret header matches
         if (path.startsWith('/api/admin')) {
           const adminSecret = req.headers.get('x-admin-secret');
-          if (adminSecret && adminSecret === process.env.ADMIN_SECRET) {
+          // Constant-time compare: plain === leaks prefix-match timing.
+          if (adminSecret && secretsEqual(adminSecret, process.env.ADMIN_SECRET)) {
             return true;
           }
           return !!token;

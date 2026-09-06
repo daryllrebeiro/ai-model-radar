@@ -138,4 +138,94 @@ describe('Phase P7: Resend Email Digests & Unsubscribe Flow', () => {
     });
     expect(html).not.toContain('You could have saved $');
   });
+
+  it('8. Renders upstream-derived strings as inert text, never executable markup', () => {
+    const payload = `"><script>alert('xss')</script><img src=x onerror=alert(1)>`;
+    const html = renderDigestHtml({
+      recipientEmail: 'subscriber@company.com',
+      recentEvents: [
+        {
+          id: 1,
+          model_id: 'evil/model',
+          model_name: payload,
+          provider: payload,
+          event_type: 'PRICE_CHANGE',
+          old_value: { price_prompt: 0.000004 },
+          new_value: { price_prompt: 0.000003 },
+          pct_change: -25,
+          source: 'openrouter',
+          detected_at: new Date().toISOString(),
+        },
+        {
+          id: 2,
+          model_id: 'evil/model-2',
+          model_name: `Free ${payload}`,
+          provider: 'EvilHub',
+          event_type: 'NEW_MODEL',
+          old_value: null,
+          new_value: { is_free: true },
+          pct_change: null,
+          source: 'openrouter',
+          detected_at: new Date().toISOString(),
+        },
+      ],
+      timeframe: 'daily',
+      forecasts: [
+        {
+          id: 'F-evil',
+          model_id: 'evil/model',
+          provider: payload,
+          model_name: payload,
+          family: 'evil',
+          probability: 0.9,
+          confidence: 'high',
+          expected_pct_change: 10,
+          expected_window_days: 7,
+          model_age_days: 10,
+          days_since_last_cut: null,
+          cadence_days: null,
+          cadence_samples: 0,
+          factors: [],
+          generated_at: new Date().toISOString(),
+        },
+      ],
+      savings: {
+        monthly_usd: 100,
+        model_name: payload,
+        model_id: 'evil/model',
+        compare_url: '/compare',
+      },
+      briefs: [
+        {
+          generated_at: new Date().toISOString(),
+          scope: 'watchlist',
+          window_days: 7,
+          watchlist: ['evil/model'],
+          headline: `Dropped ${payload}`,
+          models: [
+            {
+              model_id: 'evil/model',
+              name: payload,
+              provider: 'EvilHub',
+              window_pct_change: -25,
+              old_prompt_1m: 4,
+              new_prompt_1m: 3,
+              became_free: false,
+              eol: false,
+              forecast_probability: null,
+              cited_events: 1,
+            },
+          ],
+          citations: [],
+        },
+      ],
+    });
+
+    // No raw executable markup from upstream strings may survive rendering
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('onerror=alert(1)>');
+    // The payload text itself is still present, HTML-escaped and inert
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('&lt;img');
+  });
 });

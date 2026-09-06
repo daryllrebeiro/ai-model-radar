@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getLatestIngestionRuns, getMarketStats } from '../../../../lib/db/queries';
 import { isPostgres } from '../../../../lib/db/client';
+import { secretsEqual } from '../../../../lib/secrets';
 import { getGitHubRateLimitStatus, getGitHubPollIntervalMinutes } from '../../../../lib/ingestion/github-labs';
 import { isBillingEnabled } from '../../../../lib/feature-flags';
 
@@ -20,8 +21,8 @@ export async function GET(request: NextRequest) {
   const secretHeader = request.headers.get('x-admin-secret');
 
   const isAuthorized =
-    authHeader === `Bearer ${adminSecret}` ||
-    secretHeader === adminSecret;
+    secretsEqual(authHeader, `Bearer ${adminSecret}`) ||
+    secretsEqual(secretHeader, adminSecret);
 
   if (!isAuthorized) {
     return NextResponse.json(

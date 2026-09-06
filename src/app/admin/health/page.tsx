@@ -14,6 +14,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { formatRelativeTime } from '@/lib/utils';
+import { secretsEqual } from '@/lib/secrets';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,8 +42,8 @@ export default async function AdminHealthPage() {
   const secretHeader = headersList.get('x-admin-secret');
 
   const isAuthorized =
-    authHeader === `Bearer ${adminSecret}` ||
-    secretHeader === adminSecret;
+    secretsEqual(authHeader, `Bearer ${adminSecret}`) ||
+    secretsEqual(secretHeader, adminSecret);
 
   if (!isAuthorized) {
     return (

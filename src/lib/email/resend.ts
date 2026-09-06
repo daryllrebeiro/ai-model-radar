@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { ModelEvent } from '@/types/events';
 import { PriceDropForecast } from '@/types/forecast';
 import { MarketBrief } from '@/types/ask';
+import { escapeHtml } from '../sanitize';
 import { logger } from '../logger';
 
 const UNSUBSCRIBE_SECRET = process.env.UNSUBSCRIBE_SECRET || 'amr_unsubscribe_secret_default';
@@ -113,7 +114,7 @@ export function renderDigestHtml({
           (e) => `
         <div class="event-card" style="background-color: #16243E; border-color: #1E3A8A;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div class="model-name" style="color: #60A5FA;">${e.model_name || e.model_id}</div>
+            <div class="model-name" style="color: #60A5FA;">${escapeHtml(e.model_name || e.model_id)}</div>
             <span style="font-size: 10px; font-family: monospace; background-color: #1E3A8A; color: #93C5FD; padding: 2px 6px; border-radius: 4px;">WATCHLIST</span>
           </div>
           <div style="font-size: 12px; color: #93C5FD; margin-top: 4px;">
@@ -127,7 +128,7 @@ export function renderDigestHtml({
                 : e.event_type === 'CONTEXT_CHANGED'
                 ? 'Context window updated'
                 : 'Market update detected'
-            } &bull; Provider: ${e.provider || 'AI Hub'}
+            } &bull; Provider: ${escapeHtml(e.provider || 'AI Hub')}
           </div>
         </div>`
         )
@@ -146,9 +147,9 @@ export function renderDigestHtml({
         .map(
           (e) => `
         <div class="event-card">
-          <div class="model-name">${e.model_name || e.model_id}</div>
+          <div class="model-name">${escapeHtml(e.model_name || e.model_id)}</div>
           <div style="font-size: 12px; color: #34D399; margin-top: 4px;">
-            ${e.pct_change ? `${Math.abs(Math.round(e.pct_change))}% price cut` : 'Price dropped to free'} &bull; Provider: ${e.provider || 'AI Hub'}
+            ${e.pct_change ? `${Math.abs(Math.round(e.pct_change))}% price cut` : 'Price dropped to free'} &bull; Provider: ${escapeHtml(e.provider || 'AI Hub')}
           </div>
         </div>`
         )
@@ -167,8 +168,8 @@ export function renderDigestHtml({
         .map(
           (e) => `
         <div class="event-card">
-          <div class="model-name">${e.model_name || e.model_id}</div>
-          <div style="font-size: 12px; color: #94A3B8; margin-top: 4px;">Provider: ${e.provider || 'AI Hub'} &bull; Newly tracked model</div>
+          <div class="model-name">${escapeHtml(e.model_name || e.model_id)}</div>
+          <div style="font-size: 12px; color: #94A3B8; margin-top: 4px;">Provider: ${escapeHtml(e.provider || 'AI Hub')} &bull; Newly tracked model</div>
         </div>`
         )
         .join('')}
@@ -186,11 +187,11 @@ export function renderDigestHtml({
         .map(
           (f) => `
         <div class="event-card" style="background-color: #1C1917; border-color: #B45309;">
-          <div class="model-name" style="color: #FCD34D;">${f.model_name || f.model_id}</div>
+          <div class="model-name" style="color: #FCD34D;">${escapeHtml(f.model_name || f.model_id)}</div>
           <div style="font-size: 12px; color: #FBBF24; margin-top: 4px;">
             ${Math.round(f.probability * 100)}% likely within ${f.expected_window_days}d
             ${f.expected_pct_change !== null ? `&bull; typical cut ≈ ${f.expected_pct_change}%` : ''}
-            &bull; Provider: ${f.provider}
+            &bull; Provider: ${escapeHtml(f.provider)}
           </div>
         </div>`
         )
@@ -204,7 +205,7 @@ export function renderDigestHtml({
         ? `
     <div style="background-color: #064E3B; border-left: 4px solid #22C55E; padding: 14px 18px; border-radius: 10px; margin: 12px 0;">
       <strong style="color: #4ADE80;">💸 You could have saved $${savings.monthly_usd.toLocaleString()} this month</strong>
-      <span style="color: #A7F3D0; font-size: 13px;"> — switching your workload to <strong>${savings.model_name}</strong> would cut ~$${savings.monthly_usd.toLocaleString()}/mo.</span>
+      <span style="color: #A7F3D0; font-size: 13px;"> — switching your workload to <strong>${escapeHtml(savings.model_name)}</strong> would cut ~$${savings.monthly_usd.toLocaleString()}/mo.</span>
       <br /><a href="${baseUrl}${savings.compare_url}" style="color: #4ADE80; font-size: 12px;">Compare your options</a>
     </div>`
         : ''
@@ -220,7 +221,7 @@ export function renderDigestHtml({
       .map(
         (b) => `
     <div style="background-color: #111827; border: 1px solid #334155; border-radius: 10px; padding: 12px 16px; margin: 8px 0;">
-      <div class="model-name" style="font-size: 14px;">${b.headline}</div>
+      <div class="model-name" style="font-size: 14px;">${escapeHtml(b.headline)}</div>
       <div style="font-size: 12px; color: #94A3B8; margin-top: 4px;">
         ${b.models
           .filter((m) => m.window_pct_change !== null || m.became_free || m.eol || m.forecast_probability !== null)
@@ -231,7 +232,7 @@ export function renderDigestHtml({
             if (m.became_free) bits.push('now free');
             if (m.eol) bits.push('EOL warning');
             if (m.forecast_probability !== null) bits.push(`${Math.round(m.forecast_probability * 100)}% cut expected`);
-            return `${m.name}: ${bits.join(' · ') || 'tracked'}`;
+            return `${escapeHtml(m.name)}: ${bits.join(' · ') || 'tracked'}`;
           })
           .join('<br />')}
       </div>
