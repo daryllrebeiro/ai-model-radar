@@ -29,7 +29,33 @@ export async function createDatabaseBackup(outputDir = path.join(process.cwd(), 
 
   if (isPostgres()) {
     const pool = getPgPool();
-    const tables = ['model_snapshots', 'model_events', 'ingestion_runs', 'api_keys', 'users', 'user_watchlists', 'endpoint_telemetry', 'budget_rules', 'budget_alerts', 'migration_approvals'];
+    // Canonical table order: FK parents before children, so a restore can
+    // replay the dump top-down without violating constraints. Every table
+    // must be listed — omitting a parent (e.g. teams) makes dumps containing
+    // child rows (e.g. budget_rules.team_id) unrestorable.
+    //   users -> {teams, user_watchlists, usage_profiles}
+    //   teams -> {team_members, team_watchlists, budget_rules}
+    //   budget_rules -> {budget_alerts, migration_approvals}
+    const tables = [
+      'users',
+      'teams',
+      'user_watchlists',
+      'usage_profiles',
+      'team_members',
+      'team_watchlists',
+      'budget_rules',
+      'budget_alerts',
+      'migration_approvals',
+      // FK-independent tables (order irrelevant, kept stable for diffability)
+      'model_snapshots',
+      'model_events',
+      'ingestion_runs',
+      'api_keys',
+      'digest_deliveries',
+      'alert_rules',
+      'endpoint_telemetry',
+      'processed_stripe_event_ids',
+    ];
     for (const table of tables) {
       try {
         const res = await pool.query(`SELECT * FROM ${table}`);

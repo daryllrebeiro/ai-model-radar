@@ -15,6 +15,15 @@ const EXPECTED_TABLES = [
   'users',
   'user_watchlists',
   'alert_rules',
+  'teams',
+  'team_members',
+  'team_watchlists',
+  'usage_profiles',
+  'endpoint_telemetry',
+  'budget_rules',
+  'budget_alerts',
+  'migration_approvals',
+  'processed_stripe_event_ids',
 ];
 
 async function ensureSchemaMigrationsTable(pool: any): Promise<void> {

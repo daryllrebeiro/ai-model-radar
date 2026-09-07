@@ -27,6 +27,16 @@ export function escapeHtml(str: string): string {
 }
 
 /**
+ * Neutralizes CDATA breakout sequences for safe interpolation inside
+ * `<![CDATA[...]]>` sections. Entity-escaping does NOT work in CDATA (readers
+ * render entities literally), so the only fix is to break up `]]>`.
+ */
+export function sanitizeCdata(str: string): string {
+  if (!str) return '';
+  return String(str).replace(/\]\]>/g, ']] >');
+}
+
+/**
  * Sanitizes a hex color string for safe use in SVG attributes.
  * Only allows characters valid in hex color values.
  */

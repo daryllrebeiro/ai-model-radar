@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getEvents } from '@/lib/db/queries';
 import { getEventSummary } from '@/lib/utils';
-import { escapeXml } from '@/lib/sanitize';
+import { escapeXml, sanitizeCdata } from '@/lib/sanitize';
 import { baseUrl } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
@@ -18,17 +18,21 @@ export async function GET() {
         const pubDate = new Date(e.detected_at).toUTCString();
         const safeGuid = escapeXml(`${e.model_id}-${e.detected_at}`);
         const safeCategory = escapeXml(e.event_type);
-        const safeSubtitle = escapeXml(summary.subtitle);
-        const safeEventType = escapeXml(e.event_type);
-        const safeProvider = escapeXml(e.provider || 'OpenRouter');
+        // CDATA sections must NOT use entity-escaping (readers render entities
+        // literally); upstream strings go through sanitizeCdata instead, which
+        // neutralizes the only CDATA breakout sequence `]]>`.
+        const safeTitle = sanitizeCdata(summary.title);
+        const safeDescription = sanitizeCdata(
+          `${summary.subtitle} | Event: ${e.event_type} | Provider: ${e.provider || 'OpenRouter'}`
+        );
 
         return `
     <item>
-      <title><![CDATA[${summary.title}]]></title>
+      <title><![CDATA[${safeTitle}]]></title>
       <link>${link}</link>
       <guid isPermaLink="false">${safeGuid}</guid>
       <pubDate>${pubDate}</pubDate>
-      <description><![CDATA[${safeSubtitle} | Event: ${safeEventType} | Provider: ${safeProvider}]]></description>
+      <description><![CDATA[${safeDescription}]]></description>
       <category>${safeCategory}</category>
     </item>`;
       })

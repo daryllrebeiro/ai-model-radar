@@ -4,23 +4,55 @@ import crypto from 'crypto';
 import { isPostgres, getPgPool, saveLocalState } from '../src/lib/db/client';
 import { logger } from '../src/lib/logger';
 
+// Canonical restore order: FK parents before children, independent of the
+// key order inside the dump file. Must mirror the backup table order —
+// inserting a child (budget_rules) before its parent (teams) violates FK
+// constraints, and interleaved per-table TRUNCATE ... CASCADE wipes
+// already-restored parent rows out from under later child inserts.
+const RESTORE_ORDER = [
+    'users',
+    'teams',
+    'user_watchlists',
+    'usage_profiles',
+    'team_members',
+    'team_watchlists',
+    'budget_rules',
+    'budget_alerts',
+    'migration_approvals',
+    'model_snapshots',
+    'model_events',
+    'ingestion_runs',
+    'api_keys',
+    'digest_deliveries',
+    'alert_rules',
+    'endpoint_telemetry',
+    'processed_stripe_event_ids',
+  ];
+
+// Tables with SERIAL/BIGSERIAL primary keys whose sequences must be
+// advanced past the restored ids, otherwise the next app INSERT reuses an
+// existing id and fails on duplicate primary key.
+const SERIAL_TABLES = new Set([
+    'users',
+    'teams',
+    'user_watchlists',
+    'usage_profiles',
+    'team_members',
+    'team_watchlists',
+    'budget_rules',
+    'budget_alerts',
+    'migration_approvals',
+    'model_snapshots',
+    'model_events',
+    'ingestion_runs',
+    'api_keys',
+    'digest_deliveries',
+    'alert_rules',
+    'endpoint_telemetry',
+  ]);
+
 const VALID_TABLES = new Set([
-  'model_snapshots',
-  'model_events',
-  'ingestion_runs',
-  'api_keys',
-  'digest_deliveries',
-  'users',
-  'user_watchlists',
-  'alert_rules',
-  'teams',
-  'team_members',
-  'team_watchlists',
-  'usage_profiles',
-  'endpoint_telemetry',
-  'budget_rules',
-  'budget_alerts',
-  'migration_approvals',
+  ...RESTORE_ORDER,
   // Local file state keys (used by backup-db.ts in local mode)
   'snapshots',
   'events',
@@ -48,6 +80,8 @@ export async function restoreDatabase(backupFilePath: string, expectedChecksum: 
   }
 
   const dump = JSON.parse(raw);
+  // Typed view for the Postgres branch (table name -> row objects).
+  const pgDump: Record<string, Array<Record<string, unknown>>> = dump;
 
   // Validate all table names against allowlist
   for (const table of Object.keys(dump)) {
@@ -63,24 +97,45 @@ export async function restoreDatabase(backupFilePath: string, expectedChecksum: 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      for (const [table, rows] of Object.entries(dump)) {
-        if (Array.isArray(rows) && rows.length > 0) {
-          // Truncate table before restoring
-          await client.query(`TRUNCATE TABLE ${table} CASCADE`);
-          const columns = Object.keys(rows[0]);
-          for (const row of rows) {
-            const values = columns.map((col) => {
-              const val = row[col];
-              return typeof val === 'object' && val !== null ? JSON.stringify(val) : val;
-            });
-            const placeholders = values.map((_, idx) => `$${idx + 1}`).join(', ');
-            await client.query(
-              `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
-              values
-            );
-          }
-          restoredTables[table] = rows.length;
+      // Replay in canonical parent-first order, never in dump key order.
+      const tablesWithRows = RESTORE_ORDER.filter(
+        (t) => Array.isArray(pgDump[t]) && pgDump[t].length > 0
+      );
+      // Truncate every table key present in the dump up front in a single
+      // statement — Postgres only permits truncating an FK-referenced table
+      // when all referencing tables are truncated alongside it, so the list
+      // must include empty tables too (their FKs still block the truncate).
+      // No CASCADE: every table in the list is emptied, so no restored row
+      // can be wiped mid-run. Untouched: schema_migrations (never dumped).
+      const tablesToTruncate = RESTORE_ORDER.filter((t) =>
+        Object.prototype.hasOwnProperty.call(dump, t)
+      );
+      if (tablesToTruncate.length > 0) {
+        await client.query(`TRUNCATE TABLE ${tablesToTruncate.join(', ')}`);
+      }
+      for (const table of tablesWithRows) {
+        const rows = pgDump[table];
+        const columns = Object.keys(rows[0]);
+        for (const row of rows) {
+          const values = columns.map((col) => {
+            const val = row[col];
+            return typeof val === 'object' && val !== null ? JSON.stringify(val) : val;
+          });
+          const placeholders = values.map((_, idx) => `$${idx + 1}`).join(', ');
+          await client.query(
+            `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
+            values
+          );
         }
+        // Advance the SERIAL sequence past the restored ids so subsequent
+        // app INSERTs don't collide with restored primary keys.
+        if (SERIAL_TABLES.has(table)) {
+          await client.query(
+            `SELECT setval(pg_get_serial_sequence($1, 'id'), COALESCE((SELECT MAX(id) FROM ${table}), 1), true)`,
+            [table]
+          );
+        }
+        restoredTables[table] = rows.length;
       }
       await client.query('COMMIT');
     } catch (err) {
