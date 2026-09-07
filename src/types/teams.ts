@@ -5,6 +5,7 @@ export interface Team {
   name: string;
   slug: string;
   owner_email: string;
+  owner_user_id?: number | null;
   created_at: string;
 }
 

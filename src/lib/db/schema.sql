@@ -118,25 +118,27 @@ CREATE TABLE IF NOT EXISTS alert_rules (
 CREATE INDEX IF NOT EXISTS idx_alert_rules_active ON alert_rules(active);
 
 -- 8. Current-state view for quick reads
+-- DISTINCT ON with an id tiebreaker guarantees a single deterministic row per
+-- model even when multiple snapshots share the same polled_at timestamp. The
+-- previous MAX(polled_at) self-join emitted duplicate rows on ties, which
+-- propagated into the event-feed join in getEventsBounded.
 CREATE OR REPLACE VIEW model_current AS
-SELECT s.*
-FROM model_snapshots s
-INNER JOIN (
-    SELECT model_id, MAX(polled_at) AS max_polled_at
-    FROM model_snapshots
-    GROUP BY model_id
-) latest ON s.model_id = latest.model_id AND s.polled_at = latest.max_polled_at;
+SELECT DISTINCT ON (model_id) *
+FROM model_snapshots
+ORDER BY model_id, polled_at DESC, id DESC;
 
 -- 9. Team Workspaces (Enterprise) — collaborative shared watchlists
 CREATE TABLE IF NOT EXISTS teams (
     id                  SERIAL PRIMARY KEY,
     name                VARCHAR(120) NOT NULL,
     slug                VARCHAR(120) UNIQUE NOT NULL,
-    owner_email         VARCHAR(255) NOT NULL REFERENCES users(email),
+    owner_email         VARCHAR(255) NOT NULL,  -- retained for display; no FK
+    owner_user_id       INT REFERENCES users(id) ON DELETE SET NULL,  -- authoritative ownership
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_teams_owner ON teams(owner_email);
+CREATE INDEX IF NOT EXISTS idx_teams_owner_user_id ON teams(owner_user_id);
 
 CREATE TABLE IF NOT EXISTS team_members (
     id                  SERIAL PRIMARY KEY,
@@ -164,7 +166,8 @@ CREATE INDEX IF NOT EXISTS idx_team_watchlists_team ON team_watchlists(team_id);
 -- 10. Usage Profiles (Pro) — workload definition powering migration savings
 CREATE TABLE IF NOT EXISTS usage_profiles (
     id                  SERIAL PRIMARY KEY,
-    email               VARCHAR(255) UNIQUE NOT NULL REFERENCES users(email),
+    email               VARCHAR(255) UNIQUE NOT NULL,  -- retained for display; no FK
+    user_id             INT UNIQUE REFERENCES users(id) ON DELETE SET NULL,  -- authoritative link
     monthly_prompt_tokens BIGINT NOT NULL DEFAULT 0,
     monthly_comp_tokens   BIGINT NOT NULL DEFAULT 0,
     cache_hit_ratio     NUMERIC(4,3) NOT NULL DEFAULT 0,
@@ -175,6 +178,7 @@ CREATE TABLE IF NOT EXISTS usage_profiles (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_profiles_email ON usage_profiles(email);
+CREATE INDEX IF NOT EXISTS idx_usage_profiles_user_id ON usage_profiles(user_id);
 
 -- 11. Endpoint Probe Telemetry (Pro) — live reliability & latency measurements
 CREATE TABLE IF NOT EXISTS endpoint_telemetry (
@@ -207,7 +211,8 @@ CREATE TABLE IF NOT EXISTS budget_rules (
     name                    VARCHAR(160) NOT NULL,
     scope                   VARCHAR(20) NOT NULL DEFAULT 'personal',  -- 'personal' | 'team'
     team_id                 INT REFERENCES teams(id) ON DELETE CASCADE,
-    owner_email             VARCHAR(255) NOT NULL REFERENCES users(email),
+    owner_email             VARCHAR(255) NOT NULL,  -- retained for display; no FK
+    owner_user_id           INT REFERENCES users(id) ON DELETE SET NULL,  -- authoritative ownership
     monthly_budget_usd      NUMERIC(12, 2) NOT NULL CHECK (monthly_budget_usd > 0),
     alert_threshold_pct     NUMERIC(4, 3) NOT NULL DEFAULT 0.80,
     approval_required       BOOLEAN NOT NULL DEFAULT FALSE,
@@ -218,6 +223,7 @@ CREATE TABLE IF NOT EXISTS budget_rules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_budget_rules_owner ON budget_rules(owner_email);
+CREATE INDEX IF NOT EXISTS idx_budget_rules_owner_user_id ON budget_rules(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_budget_rules_team ON budget_rules(team_id);
 CREATE INDEX IF NOT EXISTS idx_budget_rules_active ON budget_rules(active);
 
@@ -255,3 +261,14 @@ CREATE TABLE IF NOT EXISTS migration_approvals (
 
 CREATE INDEX IF NOT EXISTS idx_migration_approvals_status ON migration_approvals (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_migration_approvals_team ON migration_approvals (team_id);
+-- One pending request per (rule, from, to): blocks duplicate-pending spam.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_migration_approvals_pending_dedup
+  ON migration_approvals (rule_id, from_model_id, to_model_id) WHERE status = 'pending';
+
+-- 15. Processed Stripe webhook event ids (idempotency) — one row per
+-- delivered event.id; the PK rejects re-deliveries (Stripe retries).
+CREATE TABLE IF NOT EXISTS processed_stripe_event_ids (
+    event_id              TEXT PRIMARY KEY,
+    event_type            VARCHAR(80),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -118,7 +118,7 @@ export async function getLatestSnapshotsMap(): Promise<Map<string, ModelSnapshot
     const res = await pool.query(`
       SELECT DISTINCT ON (model_id) *
       FROM model_snapshots
-      ORDER BY model_id, polled_at DESC
+      ORDER BY model_id, polled_at DESC, id DESC
     `);
     for (const row of res.rows) {
       map.set(row.model_id, {
@@ -1009,20 +1009,75 @@ export async function updateApiKeyLastUsed(keyHash: string): Promise<void> {
 /**
  * Revokes an API key
  */
-export async function revokeApiKey(keyHash: string): Promise<void> {
-  const now = new Date().toISOString();
-  if (isPostgres()) {
-    const pool = getPgPool();
-    await pool.query(`UPDATE api_keys SET revoked_at = $1 WHERE key_hash = $2`, [now, keyHash]);
-  } else {
-    const state = getLocalState();
-    const key = (state.api_keys || []).find((k: any) => k.key_hash === keyHash);
-    if (key) {
-      key.revoked_at = now;
-      saveLocalState(state);
+  export async function revokeApiKey(keyHash: string): Promise<void> {
+    const now = new Date().toISOString();
+    if (isPostgres()) {
+      const pool = getPgPool();
+      await pool.query(`UPDATE api_keys SET revoked_at = $1 WHERE key_hash = $2`, [now, keyHash]);
+    } else {
+      const state = getLocalState();
+      const key = (state.api_keys || []).find((k: any) => k.key_hash === keyHash);
+      if (key) {
+        key.revoked_at = now;
+        saveLocalState(state);
+      }
     }
   }
-}
+
+  /**
+   * Revokes ALL active API keys owned by an email. Called on subscription
+   * cancellation so a stale paid-tier key cannot replay the revoked tier
+   * back via monotonic upgrade (tier-persistence attack). Returns count.
+   */
+  export async function revokeUserApiKeys(email: string): Promise<number> {
+    const normalized = email.trim().toLowerCase();
+    const now = new Date().toISOString();
+    if (isPostgres()) {
+      const pool = getPgPool();
+      const res = await pool.query(
+        `UPDATE api_keys SET revoked_at = $1 WHERE owner_email = $2 AND revoked_at IS NULL`,
+        [now, normalized]
+      );
+      return res.rowCount || 0;
+    }
+    const state = getLocalState();
+    let n = 0;
+    for (const k of state.api_keys || []) {
+      if (k.owner_email === normalized && !k.revoked_at) {
+        k.revoked_at = now;
+        n++;
+      }
+    }
+    if (n > 0) saveLocalState(state);
+    return n;
+  }
+
+  /**
+   * Clears revocation for an owner's keys (repurchase / upgrade path).
+   * Only clears keys revoked without an explicit per-key reason — all
+   * bulk revocations from cancellation qualify.
+   */
+  export async function restoreUserApiKeys(email: string): Promise<number> {
+    const normalized = email.trim().toLowerCase();
+    if (isPostgres()) {
+      const pool = getPgPool();
+      const res = await pool.query(
+        `UPDATE api_keys SET revoked_at = NULL WHERE owner_email = $1 AND revoked_at IS NOT NULL`,
+        [normalized]
+      );
+      return res.rowCount || 0;
+    }
+    const state = getLocalState();
+    let n = 0;
+    for (const k of state.api_keys || []) {
+      if (k.owner_email === normalized && k.revoked_at) {
+        k.revoked_at = null;
+        n++;
+      }
+    }
+    if (n > 0) saveLocalState(state);
+    return n;
+  }
 
 /**
  * Prunes raw_json payloads older than N days to prevent database bloat
@@ -1172,10 +1227,32 @@ export async function getActiveAlertRules(): Promise<AlertRuleRecord[]> {
   }
 }
 
-/**
- * Activates or deactivates an alert rule
- */
-export async function updateAlertRuleStatus(ruleId: string | number, active: boolean): Promise<void> {
+  /**
+   * Activates or deactivates an alert rule by numeric id. Prefer this over
+   * destination matching: the old dual-key form (id OR destination) lets any
+   * future id-from-client caller disable rules by destination string.
+   */
+  export async function updateAlertRuleStatusById(ruleId: string | number, active: boolean): Promise<void> {
+    if (isPostgres()) {
+      const pool = getPgPool();
+      await pool.query(`UPDATE alert_rules SET active = $1 WHERE id = $2`, [active, ruleId]);
+    } else {
+      const state = getLocalState();
+      if ((state as any).alert_rules) {
+        const rule = (state as any).alert_rules.find((r: any) => Number(r.id) === Number(ruleId));
+        if (rule) {
+          rule.active = active;
+          saveLocalState(state);
+        }
+      }
+    }
+  }
+
+  /**
+   * @deprecated Use updateAlertRuleStatusById. Retained for backwards
+   * compatibility; do not use with client-supplied identifiers.
+   */
+  export async function updateAlertRuleStatus(ruleId: string | number, active: boolean): Promise<void> {
   if (isPostgres()) {
     const pool = getPgPool();
     await pool.query(`UPDATE alert_rules SET active = $1 WHERE id = $2 OR destination = $2::text`, [
@@ -1226,9 +1303,13 @@ export async function createOrGetUser(data: {
     if (existing.rows.length > 0) {
       return existing.rows[0];
     }
+    // Atomic insert: concurrent first-seen deliveries (e.g. Stripe webhook
+    // retries) must not 500 on unique-violation. ON CONFLICT returns the
+    // winner's row either way.
     const inserted = await pool.query(
       `INSERT INTO users (email, role, tier, stripe_customer_id, created_at, updated_at)
        VALUES ($1, $2, $3, $4, NOW(), NOW())
+       ON CONFLICT (email) DO UPDATE SET updated_at = NOW()
        RETURNING *`,
       [normalizedEmail, role, tier, data.stripe_customer_id || null]
     );
@@ -1317,6 +1398,54 @@ export async function updateUserTier(
     }
     return null;
   }
+}
+
+/**
+ * Stripe webhook delivery idempotency, split into check + mark so the event
+ * is recorded only AFTER its effects commit. Marking before applying (the old
+ * shape) turned any handler failure into a swallowed payment: the retry would
+ * report {duplicate:true} with the tier never applied.
+ * Both steps are individually atomic (unique PK); concurrent duplicates race
+ * on the mark, and tier writes are idempotent sets, so losers are harmless.
+ */
+export async function isStripeEventProcessed(eventId: string): Promise<boolean> {
+  if (!eventId) return false;
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT event_id FROM processed_stripe_event_ids WHERE event_id = $1 LIMIT 1`,
+      [eventId]
+    );
+    return res.rows.length > 0;
+  }
+  const state = getLocalState();
+  return ((state.processed_stripe_event_ids as any[]) || []).some((r: any) => r.event_id === eventId);
+}
+
+export async function markStripeEventProcessed(eventId: string, eventType?: string): Promise<boolean> {
+  if (!eventId) return false;
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `INSERT INTO processed_stripe_event_ids (event_id, event_type, created_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (event_id) DO NOTHING
+       RETURNING event_id`,
+      [eventId, eventType || null]
+    );
+    return res.rows.length > 0;
+  }
+  const state = getLocalState();
+  if (!state.processed_stripe_event_ids) state.processed_stripe_event_ids = [];
+  const seen = (state.processed_stripe_event_ids as any[]).some((r: any) => r.event_id === eventId);
+  if (seen) return false;
+  (state.processed_stripe_event_ids as any[]).push({
+    event_id: eventId,
+    event_type: eventType || null,
+    created_at: new Date().toISOString(),
+  });
+  saveLocalState(state);
+  return true;
 }
 
 /**
@@ -1559,31 +1688,52 @@ function slugify(name: string): string {
 export async function createTeam(name: string, ownerEmail: string): Promise<Team> {
   const slug = slugify(name);
   const now = new Date().toISOString();
+  const normalizedEmail = ownerEmail.trim().toLowerCase();
 
-  if (isPostgres()) {
-    const pool = getPgPool();
-    const inserted = await pool.query(
-      `INSERT INTO teams (name, slug, owner_email, created_at)
-       VALUES ($1, $2, $3, NOW())
-       RETURNING *`,
-      [name, slug, ownerEmail]
-    );
-    const team = inserted.rows[0];
-    await pool.query(
-      `INSERT INTO team_members (team_id, member_email, role, created_at)
-       VALUES ($1, $2, 'admin', NOW())
-       ON CONFLICT (team_id, member_email) DO NOTHING`,
-      [team.id, ownerEmail]
-    );
-    return team;
-  } else {
+    if (isPostgres()) {
+      const pool = getPgPool();
+      // Look up the user's id for the authoritative owner_user_id FK
+      const user = await getUserByEmail(normalizedEmail);
+      const ownerUserId = user?.id || null;
+
+      // Single transaction: a crash between the two inserts must not leave
+      // an orphan team with no admin member (owner locked out).
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const inserted = await client.query(
+          `INSERT INTO teams (name, slug, owner_email, owner_user_id, created_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           RETURNING *`,
+          [name, slug, normalizedEmail, ownerUserId]
+        );
+        const team = inserted.rows[0];
+        await client.query(
+          `INSERT INTO team_members (team_id, member_email, role, created_at)
+           VALUES ($1, $2, 'admin', NOW())
+           ON CONFLICT (team_id, member_email) DO NOTHING`,
+          [team.id, normalizedEmail]
+        );
+        await client.query('COMMIT');
+        return team;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else {
     const state = getLocalState();
     if (!state.teams) state.teams = [];
+    // Local backend: find user by email to get their id
+    const user = (state.users || []).find((u: any) => u.email === normalizedEmail);
+    const ownerUserId = user?.id || null;
     const team: Team = {
       id: state.teams.length + 1,
       name,
       slug,
-      owner_email: ownerEmail,
+      owner_email: normalizedEmail,
+      owner_user_id: ownerUserId,
       created_at: now,
     };
     state.teams.push(team);
@@ -1591,7 +1741,7 @@ export async function createTeam(name: string, ownerEmail: string): Promise<Team
     state.team_members.push({
       id: state.team_members.length + 1,
       team_id: team.id,
-      member_email: ownerEmail,
+      member_email: normalizedEmail,
       role: 'admin',
       created_at: now,
     });
@@ -1887,6 +2037,7 @@ export async function getTeamDetail(teamId: number): Promise<TeamDetail | null> 
 
 export interface UsageProfile {
   email: string;
+  user_id?: number | null;
   monthly_prompt_tokens: number;
   monthly_comp_tokens: number;
   cache_hit_ratio: number;
@@ -1897,6 +2048,7 @@ export interface UsageProfile {
 
 export interface UsageProfileInput {
   email: string;
+  user_id?: number;
   monthly_prompt_tokens: number;
   monthly_comp_tokens: number;
   cache_hit_ratio?: number;
@@ -1905,43 +2057,92 @@ export interface UsageProfileInput {
 }
 
 /**
- * Creates or updates a user's workload usage profile (upsert by email).
+ * Creates or updates a user's workload usage profile (upsert by user_id).
+ * Falls back to email if user_id not provided.
  */
 export async function upsertUsageProfile(profile: UsageProfileInput): Promise<UsageProfile> {
   const cacheHit = Math.min(1, Math.max(0, profile.cache_hit_ratio ?? 0));
   const batch = Math.min(1, Math.max(0, profile.batch_discount ?? 0));
+  // Normalize once so stored emails always match users.email exactly —
+  // unnormalized writes recreate the case/whitespace mismatch class that
+  // migration 009 had to heal.
+  const normalizedEmail = profile.email.trim().toLowerCase();
+  // Resolve user_id from email if not provided
+  let userId = profile.user_id;
+  if (!userId) {
+    const user = await getUserByEmail(normalizedEmail);
+    userId = user?.id; // undefined if user not found
+  }
 
   if (isPostgres()) {
     const pool = getPgPool();
-    const res = await pool.query(
-      `INSERT INTO usage_profiles (email, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       ON CONFLICT (email) DO UPDATE SET
-         monthly_prompt_tokens = EXCLUDED.monthly_prompt_tokens,
-         monthly_comp_tokens = EXCLUDED.monthly_comp_tokens,
-         cache_hit_ratio = EXCLUDED.cache_hit_ratio,
-         batch_discount = EXCLUDED.batch_discount,
-         primary_model_id = EXCLUDED.primary_model_id,
-         updated_at = NOW()
-       RETURNING email, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at`,
-      [profile.email, Math.floor(profile.monthly_prompt_tokens), Math.floor(profile.monthly_comp_tokens), cacheHit, batch, profile.primary_model_id]
-    );
-    const r = res.rows[0];
-    return {
-      email: r.email,
-      monthly_prompt_tokens: Number(r.monthly_prompt_tokens),
-      monthly_comp_tokens: Number(r.monthly_comp_tokens),
-      cache_hit_ratio: Number(r.cache_hit_ratio),
-      batch_discount: Number(r.batch_discount),
-      primary_model_id: r.primary_model_id,
-      updated_at: r.updated_at,
-    };
+    if (userId) {
+      // Primary path: upsert by user_id
+      const res = await pool.query(
+        `INSERT INTO usage_profiles (email, user_id, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (user_id) DO UPDATE SET
+           email = EXCLUDED.email,
+           monthly_prompt_tokens = EXCLUDED.monthly_prompt_tokens,
+           monthly_comp_tokens = EXCLUDED.monthly_comp_tokens,
+           cache_hit_ratio = EXCLUDED.cache_hit_ratio,
+           batch_discount = EXCLUDED.batch_discount,
+           primary_model_id = EXCLUDED.primary_model_id,
+           updated_at = NOW()
+         RETURNING email, user_id, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at`,
+         [normalizedEmail, userId, Math.floor(profile.monthly_prompt_tokens), Math.floor(profile.monthly_comp_tokens), cacheHit, batch, profile.primary_model_id]
+      );
+      const r = res.rows[0];
+      return {
+        email: r.email,
+        user_id: r.user_id,
+        monthly_prompt_tokens: Number(r.monthly_prompt_tokens),
+        monthly_comp_tokens: Number(r.monthly_comp_tokens),
+        cache_hit_ratio: Number(r.cache_hit_ratio),
+        batch_discount: Number(r.batch_discount),
+        primary_model_id: r.primary_model_id,
+        updated_at: r.updated_at,
+      };
+    } else {
+      // Fallback: upsert by email (for legacy/unknown users)
+      const res = await pool.query(
+        `INSERT INTO usage_profiles (email, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (email) DO UPDATE SET
+           monthly_prompt_tokens = EXCLUDED.monthly_prompt_tokens,
+           monthly_comp_tokens = EXCLUDED.monthly_comp_tokens,
+           cache_hit_ratio = EXCLUDED.cache_hit_ratio,
+           batch_discount = EXCLUDED.batch_discount,
+           primary_model_id = EXCLUDED.primary_model_id,
+           updated_at = NOW()
+         RETURNING email, user_id, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at`,
+        [normalizedEmail, Math.floor(profile.monthly_prompt_tokens), Math.floor(profile.monthly_comp_tokens), cacheHit, batch, profile.primary_model_id]
+      );
+      const r = res.rows[0];
+      return {
+        email: r.email,
+        user_id: r.user_id,
+        monthly_prompt_tokens: Number(r.monthly_prompt_tokens),
+        monthly_comp_tokens: Number(r.monthly_comp_tokens),
+        cache_hit_ratio: Number(r.cache_hit_ratio),
+        batch_discount: Number(r.batch_discount),
+        primary_model_id: r.primary_model_id,
+        updated_at: r.updated_at,
+      };
+    }
   } else {
     const state = getLocalState();
     if (!state.usage_profiles) state.usage_profiles = [];
-    const existing = state.usage_profiles.find((p: any) => p.email === profile.email);
+    // Resolve user_id for local backend
+    let userId = profile.user_id;
+    if (!userId) {
+      const user = (state.users || []).find((u: any) => u.email === normalizedEmail);
+      userId = user?.id || null;
+    }
+    const existingIdx = state.usage_profiles.findIndex((p: any) => (userId ? p.user_id === userId : p.email === normalizedEmail));
     const record = {
-      email: profile.email,
+      email: normalizedEmail,
+      user_id: userId,
       monthly_prompt_tokens: Math.floor(profile.monthly_prompt_tokens),
       monthly_comp_tokens: Math.floor(profile.monthly_comp_tokens),
       cache_hit_ratio: cacheHit,
@@ -1949,8 +2150,8 @@ export async function upsertUsageProfile(profile: UsageProfileInput): Promise<Us
       primary_model_id: profile.primary_model_id,
       updated_at: new Date().toISOString(),
     };
-    if (existing) {
-      Object.assign(existing, record);
+    if (existingIdx >= 0) {
+      state.usage_profiles[existingIdx] = { ...state.usage_profiles[existingIdx], ...record };
     } else {
       state.usage_profiles.push({ id: state.usage_profiles.length + 1, ...record });
     }
@@ -1961,19 +2162,22 @@ export async function upsertUsageProfile(profile: UsageProfileInput): Promise<Us
 
 /**
  * Loads a user's usage profile by email, if one exists.
+ * @deprecated Use getUsageProfileByUserId for new code (email is not a stable key).
  */
 export async function getUsageProfileByEmail(email: string): Promise<UsageProfile | null> {
+  const normalized = email.trim().toLowerCase();
   if (isPostgres()) {
     const pool = getPgPool();
     const res = await pool.query(
-      `SELECT email, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at
+      `SELECT email, user_id, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at
        FROM usage_profiles WHERE email = $1 LIMIT 1`,
-      [email]
+      [normalized]
     );
     if (res.rows.length === 0) return null;
     const r = res.rows[0];
     return {
       email: r.email,
+      user_id: r.user_id,
       monthly_prompt_tokens: Number(r.monthly_prompt_tokens),
       monthly_comp_tokens: Number(r.monthly_comp_tokens),
       cache_hit_ratio: Number(r.cache_hit_ratio),
@@ -1983,10 +2187,51 @@ export async function getUsageProfileByEmail(email: string): Promise<UsageProfil
     };
   } else {
     const state = getLocalState();
-    const match = (state.usage_profiles || []).find((p: any) => p.email === email);
+    const match = (state.usage_profiles || []).find((p: any) => p.email === normalized);
     if (!match) return null;
     return {
       email: match.email,
+      user_id: match.user_id,
+      monthly_prompt_tokens: Number(match.monthly_prompt_tokens),
+      monthly_comp_tokens: Number(match.monthly_comp_tokens),
+      cache_hit_ratio: Number(match.cache_hit_ratio),
+      batch_discount: Number(match.batch_discount),
+      primary_model_id: match.primary_model_id,
+      updated_at: match.updated_at,
+    };
+  }
+}
+
+/**
+ * Loads a user's usage profile by user_id (preferred, stable key).
+ */
+export async function getUsageProfileByUserId(userId: number): Promise<UsageProfile | null> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `SELECT email, user_id, monthly_prompt_tokens, monthly_comp_tokens, cache_hit_ratio, batch_discount, primary_model_id, updated_at
+       FROM usage_profiles WHERE user_id = $1 LIMIT 1`,
+      [userId]
+    );
+    if (res.rows.length === 0) return null;
+    const r = res.rows[0];
+    return {
+      email: r.email,
+      user_id: r.user_id,
+      monthly_prompt_tokens: Number(r.monthly_prompt_tokens),
+      monthly_comp_tokens: Number(r.monthly_comp_tokens),
+      cache_hit_ratio: Number(r.cache_hit_ratio),
+      batch_discount: Number(r.batch_discount),
+      primary_model_id: r.primary_model_id,
+      updated_at: r.updated_at,
+    };
+  } else {
+    const state = getLocalState();
+    const match = (state.usage_profiles || []).find((p: any) => p.user_id === userId);
+    if (!match) return null;
+    return {
+      email: match.email,
+      user_id: match.user_id,
       monthly_prompt_tokens: Number(match.monthly_prompt_tokens),
       monthly_comp_tokens: Number(match.monthly_comp_tokens),
       cache_hit_ratio: Number(match.cache_hit_ratio),
@@ -2150,6 +2395,7 @@ function mapBudgetRuleRows(rows: any[]): BudgetRule[] {
     scope: r.scope,
     team_id: r.team_id !== null && r.team_id !== undefined ? Number(r.team_id) : null,
     owner_email: r.owner_email,
+    owner_user_id: r.owner_user_id !== null && r.owner_user_id !== undefined ? Number(r.owner_user_id) : null,
     monthly_budget_usd: Number(r.monthly_budget_usd),
     alert_threshold_pct: Number(r.alert_threshold_pct),
     approval_required: Boolean(r.approval_required),
@@ -2166,18 +2412,28 @@ function mapBudgetRuleRow(r: any): BudgetRule {
 
 export async function createBudgetRule(input: BudgetRuleInput): Promise<BudgetRule> {
   const threshold = Math.min(1, Math.max(0, input.alert_threshold_pct ?? 0.8));
+  // Normalize once so stored emails always match users.email exactly.
+  const normalizedOwnerEmail = input.owner_email.trim().toLowerCase();
+  // Resolve owner_user_id from owner_email
+  let ownerUserId: number | null = null;
+  if (normalizedOwnerEmail) {
+    const user = await getUserByEmail(normalizedOwnerEmail);
+    ownerUserId = user?.id || null;
+  }
+
   if (isPostgres()) {
     const pool = getPgPool();
     const res = await pool.query(
       `INSERT INTO budget_rules
-        (name, scope, team_id, owner_email, monthly_budget_usd, alert_threshold_pct, approval_required, notify_email, active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (name, scope, team_id, owner_email, owner_user_id, monthly_budget_usd, alert_threshold_pct, approval_required, notify_email, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         input.name,
         input.scope,
         input.team_id ?? null,
-        input.owner_email,
+        normalizedOwnerEmail,
+        ownerUserId,
         Math.floor(input.monthly_budget_usd * 100) / 100,
         threshold,
         Boolean(input.approval_required),
@@ -2194,7 +2450,8 @@ export async function createBudgetRule(input: BudgetRuleInput): Promise<BudgetRu
       name: input.name,
       scope: input.scope,
       team_id: input.team_id ?? null,
-      owner_email: input.owner_email,
+      owner_email: normalizedOwnerEmail,
+      owner_user_id: ownerUserId,
       monthly_budget_usd: Math.floor(input.monthly_budget_usd * 100) / 100,
       alert_threshold_pct: threshold,
       approval_required: Boolean(input.approval_required),
@@ -2223,28 +2480,49 @@ export async function getBudgetRule(id: number): Promise<BudgetRule | null> {
 
 /**
  * Rules the given user can see: their own personal rules plus rules of every
- * team they belong to.
+ * team they belong to. Uses owner_user_id as primary key (stable), with
+ * owner_email as fallback for rows not yet migrated.
  */
 export async function getBudgetRulesForUser(email: string): Promise<BudgetRule[]> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await getUserByEmail(normalizedEmail);
+  const userId = user?.id || null;
+
   if (isPostgres()) {
     const pool = getPgPool();
-    const res = await pool.query(
-      `SELECT * FROM budget_rules
-       WHERE owner_email = $1
-          OR team_id IN (SELECT team_id FROM team_members WHERE member_email = $1)
-       ORDER BY active DESC, id DESC`,
-      [email]
-    );
+    let res;
+    if (userId) {
+      // Primary path: use stable user_id FK
+      res = await pool.query(
+        `SELECT * FROM budget_rules
+         WHERE owner_user_id = $1
+            OR team_id IN (SELECT team_id FROM team_members WHERE member_email = $2)
+         ORDER BY active DESC, id DESC`,
+        [userId, normalizedEmail]
+      );
+    } else {
+      // Fallback: user not in DB yet, use email
+      res = await pool.query(
+        `SELECT * FROM budget_rules
+         WHERE owner_email = $1
+            OR team_id IN (SELECT team_id FROM team_members WHERE member_email = $1)
+         ORDER BY active DESC, id DESC`,
+        [normalizedEmail]
+      );
+    }
     return mapBudgetRuleRows(res.rows);
   } else {
     const state = getLocalState();
     const teamIds = new Set(
       (state.team_members || [])
-        .filter((m: any) => m.member_email === email)
+        .filter((m: any) => m.member_email === normalizedEmail)
         .map((m: any) => Number(m.team_id))
     );
     return (state.budget_rules || [])
-      .filter((r: any) => r.owner_email === email || teamIds.has(Number(r.team_id)))
+      .filter((r: any) =>
+        (userId ? r.owner_user_id === userId : r.owner_email === normalizedEmail) ||
+        teamIds.has(Number(r.team_id))
+      )
       .map(mapBudgetRuleRow)
       .sort((a: any, b: any) => Number(b.id) - Number(a.id));
   }
@@ -2509,15 +2787,17 @@ export async function decideMigrationApproval(
   reviewedBy: string
 ): Promise<MigrationApproval | null> {
   if (isPostgres()) {
-    const pool = getPgPool();
-    const res = await pool.query(
-      `UPDATE migration_approvals
-       SET status = $2, reviewed_by = $3, decision_at = NOW()
-       WHERE id = $1
-       RETURNING *`,
-      [id, decision, reviewedBy]
-    );
-    if (res.rows.length === 0) return null;
+      const pool = getPgPool();
+      // Optimistic guard: only pending rows transition. Concurrent
+      // approve/reject races resolve to exactly one winner; losers get null.
+      const res = await pool.query(
+        `UPDATE migration_approvals
+         SET status = $2, reviewed_by = $3, decision_at = NOW()
+         WHERE id = $1 AND status = 'pending'
+         RETURNING *`,
+        [id, decision, reviewedBy]
+      );
+      if (res.rows.length === 0) return null;
     const r = res.rows[0];
     return {
       id: Number(r.id),
@@ -2533,14 +2813,14 @@ export async function decideMigrationApproval(
       created_at: r.created_at,
     };
   } else {
-    const state = getLocalState();
-    const match = (state.migration_approvals || []).find((a: any) => Number(a.id) === id);
-    if (!match) return null;
-    match.status = decision;
-    match.reviewed_by = reviewedBy;
-    match.decision_at = new Date().toISOString();
-    saveLocalState(state);
-    return { ...match };
+      const state = getLocalState();
+      const match = (state.migration_approvals || []).find((a: any) => Number(a.id) === id);
+      if (!match || match.status !== 'pending') return null;
+      match.status = decision;
+      match.reviewed_by = reviewedBy;
+      match.decision_at = new Date().toISOString();
+      saveLocalState(state);
+      return { ...match };
   }
 }
 

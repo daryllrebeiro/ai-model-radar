@@ -6,6 +6,7 @@ export interface BudgetRule {
   scope: BudgetRuleScope;
   team_id?: number | null;
   owner_email: string;
+  owner_user_id?: number | null;
   monthly_budget_usd: number;
   alert_threshold_pct: number; // 0..1 — alert / count as "approaching" at this fraction
   approval_required: boolean;

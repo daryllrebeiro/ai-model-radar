@@ -50,31 +50,37 @@ interface LocalDbState {
   budget_rules: Array<any>;
   budget_alerts: Array<any>;
   migration_approvals: Array<any>;
+  processed_stripe_event_ids: Array<any>;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
 
+function emptyState(): LocalDbState {
+  return {
+    snapshots: [],
+    events: [],
+    ingestion_runs: [],
+    api_keys: [],
+    digest_deliveries: [],
+    users: [],
+    user_watchlists: [],
+    alert_rules: [],
+    teams: [],
+    team_members: [],
+    team_watchlists: [],
+    usage_profiles: [],
+    endpoint_telemetry: [],
+    budget_rules: [],
+    budget_alerts: [],
+    migration_approvals: [],
+    processed_stripe_event_ids: [],
+  };
+}
+
 function getLocalState(): LocalDbState {
   if (!fs.existsSync(LOCAL_DB_PATH)) {
-    const initial: LocalDbState = {
-      snapshots: [],
-      events: [],
-      ingestion_runs: [],
-      api_keys: [],
-      digest_deliveries: [],
-      users: [],
-      user_watchlists: [],
-      alert_rules: [],
-      teams: [],
-      team_members: [],
-      team_watchlists: [],
-      usage_profiles: [],
-      endpoint_telemetry: [],
-      budget_rules: [],
-      budget_alerts: [],
-      migration_approvals: [],
-    };
-    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(initial, null, 2), 'utf-8');
+    const initial = emptyState();
+    saveLocalState(initial);
     return initial;
   }
   try {
@@ -97,31 +103,34 @@ function getLocalState(): LocalDbState {
       budget_rules: parsed.budget_rules || [],
       budget_alerts: parsed.budget_alerts || [],
       migration_approvals: parsed.migration_approvals || [],
+      processed_stripe_event_ids: parsed.processed_stripe_event_ids || [],
     };
   } catch {
-    return {
-      snapshots: [],
-      events: [],
-      ingestion_runs: [],
-      api_keys: [],
-      digest_deliveries: [],
-      users: [],
-      user_watchlists: [],
-      alert_rules: [],
-      teams: [],
-      team_members: [],
-      team_watchlists: [],
-      usage_profiles: [],
-      endpoint_telemetry: [],
-      budget_rules: [],
-      budget_alerts: [],
-      migration_approvals: [],
-    };
+    return emptyState();
   }
 }
 
 function saveLocalState(state: LocalDbState) {
-  fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(state, null, 2), 'utf-8');
+  // Atomic replace: write to a temp file in the same directory, then rename
+  // over the target. rename() is atomic on the same volume (POSIX), so a crash
+  // mid-write can never leave a truncated/corrupt .radar-data.json — the
+  // previous direct writeFileSync could. The local backend is single-writer
+  // (dev-only); read-modify-write cycles are synchronous and never yield
+  // between getLocalState() and saveLocalState(), so no interleaving occurs.
+  // Windows: renameSync fails with EPERM when the destination exists, so fall
+  // back to copy+unlink (not crash-atomic, but keeps single-writer correctness
+  // and never throws under concurrent use).
+  const tmpPath = `${LOCAL_DB_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+  if (process.platform === 'win32') {
+    // renameSync fails with EPERM on Windows when the destination exists,
+    // so copy+unlink instead (not crash-atomic, but keeps single-writer
+    // correctness and never throws under concurrent use).
+    fs.copyFileSync(tmpPath, LOCAL_DB_PATH);
+    fs.unlinkSync(tmpPath);
+  } else {
+    fs.renameSync(tmpPath, LOCAL_DB_PATH);
+  }
 }
 
 /**

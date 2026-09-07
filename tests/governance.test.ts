@@ -255,6 +255,29 @@ describe('Phase 5 - Budget governance: persistence', () => {
     const after = await getMigrationApprovals({ status: 'pending' });
     expect(after.some((a) => a.id === created.id)).toBe(false);
   });
+
+  it('11b. Concurrent re-decision loses: second decide returns null (no overwrite)', async () => {
+    await createOrGetUser({ email: EX });
+    const rule = await createBudgetRule({
+      name: 'Race rule',
+      scope: 'personal',
+      owner_email: EX,
+      monthly_budget_usd: 1000,
+    });
+    const created = await createMigrationApproval({
+      rule_id: rule.id!,
+      team_id: null,
+      from_model_id: 'acme/a-1',
+      to_model_id: 'beta/z-9',
+      monthly_savings_usd: 10,
+      requested_by: EX,
+    });
+    const first = await decideMigrationApproval(created.id!, 'approved', 'admin@test.dev');
+    expect(first!.status).toBe('approved');
+    // Loser of the race: row already decided, must not overwrite.
+    const second = await decideMigrationApproval(created.id!, 'rejected', 'other@test.dev');
+    expect(second).toBeNull();
+  });
 });
 
 describe('Phase 5 - Budget governance: API (v1)', () => {
@@ -398,9 +421,20 @@ describe('Phase 5 - Budget governance: API (v1)', () => {
       }),
       { params: { id: String(approval.id) } }
     );
-    expect(decided.status).toBe(200);
-    const body = await decided.json();
-    expect(body.approval.status).toBe('approved');
-    expect(body.approval.reviewed_by).toBe(email);
+      expect(decided.status).toBe(200);
+      const body = await decided.json();
+      expect(body.approval.status).toBe('approved');
+      expect(body.approval.reviewed_by).toBe(email);
+
+      // Re-deciding an already-decided approval is a 409, not an overwrite.
+      const redecide = await decideApprovalRoute(
+        new NextRequest(`http://localhost/api/v1/governance/approvals/${approval.id}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision: 'rejected' }),
+        }),
+        { params: { id: String(approval.id) } }
+      );
+      expect(redecide.status).toBe(409);
+    });
   });
-});
