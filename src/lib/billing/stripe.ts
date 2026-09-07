@@ -59,6 +59,7 @@ export async function createCheckoutSession(params: {
 
   // If live Stripe API key is provided, use Stripe REST API
   if (stripeSecretKey && stripeSecretKey.startsWith('sk_')) {
+    const idempotencyKey = `checkout:${params.customerEmail}:${params.tier}:${Math.floor(Date.now() / 60000)}`;
     const body = new URLSearchParams({
       'payment_method_types[0]': 'card',
       mode: 'subscription',
@@ -76,6 +77,7 @@ export async function createCheckoutSession(params: {
       headers: {
         Authorization: `Bearer ${stripeSecretKey}`,
         'Content-Type': 'application/x-www-form-urlencoded',
+        'Idempotency-Key': idempotencyKey,
       },
       body: body.toString(),
     });
@@ -96,12 +98,18 @@ export async function createCheckoutSession(params: {
 }
 
 /**
- * Verifies Stripe Webhook signature (Stripe-Signature header with t=timestamp,v1=signature)
+ * Verifies Stripe Webhook signature (Stripe-Signature header with t=timestamp,v1=signature).
+ * Rejects timestamps outside toleranceSec (default 300s) to block replay attacks —
+ * a captured valid payload must not verify forever.
  */
+export const STRIPE_WEBHOOK_TOLERANCE_SEC = 300;
+
 export function verifyStripeWebhookSignature(
   rawPayload: string,
   signatureHeader: string | null,
-  webhookSecret: string
+  webhookSecret: string,
+  toleranceSec: number = STRIPE_WEBHOOK_TOLERANCE_SEC,
+  nowSec: number = Math.floor(Date.now() / 1000)
 ): boolean {
   if (!signatureHeader || !webhookSecret) return false;
 
@@ -116,6 +124,9 @@ export function verifyStripeWebhookSignature(
   }
 
   if (!timestamp || !signature) return false;
+
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || Math.abs(nowSec - ts) > toleranceSec) return false;
 
   // Compute expected HMAC SHA-256 signature
   const signedPayload = `${timestamp}.${rawPayload}`;
@@ -161,7 +172,7 @@ export async function cancelStripeSubscription(
       if (isSubId) {
         // Direct cancel by subscription ID
         const response = await fetch(
-          `https://api.stripe.com/v1/subscriptions/${subscriptionIdOrCustomerId}`,
+          `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscriptionIdOrCustomerId)}`,
           {
             method: 'DELETE',
             headers: {
@@ -187,7 +198,7 @@ export async function cancelStripeSubscription(
       } else {
         // List customer's active subscriptions and cancel each
         const listRes = await fetch(
-          `https://api.stripe.com/v1/subscriptions?customer=${subscriptionIdOrCustomerId}&status=active`,
+          `https://api.stripe.com/v1/subscriptions?customer=${encodeURIComponent(subscriptionIdOrCustomerId)}&status=active`,
           {
             headers: {
               Authorization: `Bearer ${stripeSecretKey}`,
@@ -209,7 +220,7 @@ export async function cancelStripeSubscription(
         let canceled = 0;
 
         for (const sub of subs) {
-          const delRes = await fetch(`https://api.stripe.com/v1/subscriptions/${sub.id}`, {
+          const delRes = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(sub.id)}`, {
             method: 'DELETE',
             headers: {
               Authorization: `Bearer ${stripeSecretKey}`,

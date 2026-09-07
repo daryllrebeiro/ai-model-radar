@@ -53,6 +53,27 @@ export function baseUrl(): string {
   );
 }
 
+/**
+ * Allowlists a client-supplied redirect URL against the canonical site origin.
+ * Absolute URLs to other origins, protocol-relative URLs, and non-http(s)
+ * schemes fall back — prevents post-payment phishing redirects via
+ * successUrl/cancelUrl/returnUrl body params and the Origin header.
+ */
+export function safeRedirectUrl(raw: string | null | undefined, fallbackPath = '/alerts'): string {
+  const base = baseUrl();
+  if (!raw || typeof raw !== 'string') return `${base}${fallbackPath}`;
+  const trimmed = raw.trim();
+  try {
+    const parsed = new URL(trimmed, base);
+    if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.origin === new URL(base).origin) {
+      return parsed.toString();
+    }
+  } catch {
+    // unparseable — fall through to fallback
+  }
+  return `${base}${fallbackPath}`;
+}
+
 let hasWarnedGithubToken = false;
 
 /**
@@ -93,6 +114,16 @@ export function validateEnv(processEnv: Record<string, any> = process.env): {
     if (!processEnv.NEXT_PUBLIC_SITE_URL) {
       errors.push(
         'NEXT_PUBLIC_SITE_URL is required in production (used for RSS feeds, badges, canonical links).'
+      );
+    }
+    if (!processEnv.CRON_SECRET || String(processEnv.CRON_SECRET).length < 16) {
+      errors.push(
+        'CRON_SECRET is required in production (>= 16 chars). Without it all /api/cron/* routes refuse to run.'
+      );
+    }
+    if (!processEnv.UNSUBSCRIBE_SECRET || String(processEnv.UNSUBSCRIBE_SECRET).length < 16) {
+      errors.push(
+        'UNSUBSCRIBE_SECRET is required in production (>= 16 chars). Without it unsubscribe tokens use an insecure default.'
       );
     }
   }

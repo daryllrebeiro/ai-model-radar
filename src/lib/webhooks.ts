@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { recordDigestDelivery } from './db/queries';
+import { assertPublicHttpUrl, fetchWithSsrfRedirects, SsrfBlockedError } from './ssrf-guard';
 import { logger } from './logger';
 
 export interface WebhookDeliveryOptions {
@@ -49,6 +50,26 @@ export async function deliverWebhookPayload(
   const payloadString = JSON.stringify(payload);
   const deliveryId = `del-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
   const signature = secret ? computeHmacSignature(payloadString, secret) : undefined;
+  const startTime = Date.now();
+
+  // SSRF guard: destinationUrl is user-controlled (alert rule / test form).
+  // Reject loopback, private ranges, metadata endpoints, non-http(s) up front.
+  try {
+    assertPublicHttpUrl(destinationUrl);
+  } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      logger.warn('Webhook delivery blocked by SSRF guard:', { destinationUrl });
+      return {
+        success: false,
+        httpStatus: undefined,
+        attempts: 0,
+        durationMs: Date.now() - startTime,
+        error: 'Destination URL is not allowed (must be a public http(s) URL).',
+        signature,
+      };
+    }
+    throw err;
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -63,7 +84,6 @@ export async function deliverWebhookPayload(
   let attempts = 0;
   let lastError: string | undefined;
   let lastStatus: number | undefined;
-  const startTime = Date.now();
 
   while (attempts < maxRetries) {
     attempts++;
@@ -71,7 +91,9 @@ export async function deliverWebhookPayload(
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetchFn(destinationUrl, {
+      // Redirects are followed manually with per-hop SSRF re-validation
+      // (fetchWithSsrfRedirects) so a benign URL can't 302 into metadata.
+      const response = await fetchWithSsrfRedirects(fetchFn, destinationUrl, {
         method: 'POST',
         headers,
         body: payloadString,

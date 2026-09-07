@@ -47,6 +47,8 @@ describe('Phase P4: Environment Schema Validation', () => {
     expect(res.errors?.some((e) => e.includes('AUTH_SECRET'))).toBe(true);
     expect(res.errors?.some((e) => e.includes('DATABASE_URL'))).toBe(true);
     expect(res.errors?.some((e) => e.includes('NEXT_PUBLIC_SITE_URL'))).toBe(true);
+    expect(res.errors?.some((e) => e.includes('CRON_SECRET'))).toBe(true);
+    expect(res.errors?.some((e) => e.includes('UNSUBSCRIBE_SECRET'))).toBe(true);
   });
 
   it('5. Parses string booleans and site URL gateways', () => {
@@ -57,6 +59,7 @@ describe('Phase P4: Environment Schema Validation', () => {
       NEXT_PUBLIC_SITE_URL: 'https://ai-model-radar.com',
       FEATURE_ENFORCEMENT: 'true',
       UNSUBSCRIBE_SECRET: 'unsubscribe-secret-32-char-min',
+      CRON_SECRET: 'super-secure-cron-secret-123',
       OPENROUTER_API_URL: 'https://openrouter.ai/api/v1/models',
     });
 

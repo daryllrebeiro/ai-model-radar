@@ -53,7 +53,13 @@ export const authOptions: NextAuthOptions = {
   ],
   session: {
     strategy: 'jwt' as SessionStrategy,
-    maxAge: 30 * 24 * 60 * 60,
+    // Short-lived sessions with rolling refresh: a stolen token is useful for
+    // at most 7 days (down from 30), and active sessions refresh their expiry
+    // on use (updateAge 24h). Server-side revocation remains unavailable with
+    // stateless JWTs — for instant lockout, revoke the user's API keys and
+    // rotate AUTH_SECRET (invalidates all sessions).
+    maxAge: 7 * 24 * 60 * 60,
+    updateAge: 24 * 60 * 60,
   },
   pages: {
     signIn: '/auth/signin',

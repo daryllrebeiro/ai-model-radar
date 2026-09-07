@@ -324,13 +324,36 @@ describe('Phase 5 - Endpoint Intelligence: /api/cron/probes', () => {
   });
 
   it('18. dry_run resolves probe targets from the tracked catalog without probing', async () => {
-    const res = await probesCronRoute(new NextRequest('http://localhost/api/cron/probes?dry_run=1'));
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.success).toBe(true);
-    expect(body.dry_run).toBe(true);
-    expect(typeof body.snapshots).toBe('number');
-    expect(typeof body.targets).toBe('number');
-    expect(body.targets).toBeLessThanOrEqual(body.snapshots);
+    const previous = process.env.CRON_SECRET;
+    process.env.CRON_SECRET = 'test-secret-probes-dryrun';
+    try {
+      const res = await probesCronRoute(
+        new NextRequest('http://localhost/api/cron/probes?dry_run=1', {
+          headers: { Authorization: 'Bearer test-secret-probes-dryrun' },
+        })
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.dry_run).toBe(true);
+      expect(typeof body.snapshots).toBe('number');
+      expect(typeof body.targets).toBe('number');
+      expect(body.targets).toBeLessThanOrEqual(body.snapshots);
+    } finally {
+      if (previous === undefined) delete process.env.CRON_SECRET;
+      else process.env.CRON_SECRET = previous;
+    }
+  });
+
+  it('19. rejects cron probes when CRON_SECRET is unset (fail-closed)', async () => {
+    const previous = process.env.CRON_SECRET;
+    delete process.env.CRON_SECRET;
+    try {
+      const res = await probesCronRoute(new NextRequest('http://localhost/api/cron/probes?dry_run=1'));
+      expect(res.status).toBe(401);
+    } finally {
+      if (previous === undefined) delete process.env.CRON_SECRET;
+      else process.env.CRON_SECRET = previous;
+    }
   });
 });

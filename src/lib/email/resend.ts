@@ -3,16 +3,29 @@ import { ModelEvent } from '@/types/events';
 import { PriceDropForecast } from '@/types/forecast';
 import { MarketBrief } from '@/types/ask';
 import { escapeHtml } from '../sanitize';
-import { logger } from '../logger';
+import { logger, hashEmail } from '../logger';
 
-const UNSUBSCRIBE_SECRET = process.env.UNSUBSCRIBE_SECRET || 'amr_unsubscribe_secret_default';
+function unsubscribeSecret(): string {
+  const secret = process.env.UNSUBSCRIBE_SECRET;
+  // Fail loud in production: a hardcoded fallback would make unsubscribe
+  // tokens forgeable by anyone who reads this file. Dev/test keep a
+  // non-secret placeholder so digests render without configuration.
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('UNSUBSCRIBE_SECRET is required in production (>= 16 chars).');
+    }
+    logger.warn('UNSUBSCRIBE_SECRET unset: using dev-only placeholder — tokens are forgeable outside production.');
+    return 'amr_unsubscribe_secret_dev_only';
+  }
+  return secret;
+}
 
 /**
  * Generates an HMAC-SHA256 unsubscribe token for an email address
  */
 export function generateUnsubscribeToken(email: string): string {
   return crypto
-    .createHmac('sha256', UNSUBSCRIBE_SECRET)
+    .createHmac('sha256', unsubscribeSecret())
     .update(email.toLowerCase().trim())
     .digest('hex');
 }
@@ -293,6 +306,6 @@ export async function sendEmailDigest(params: {
   }
 
   // Mock send for dev/test
-  logger.info(`[Mock Resend] Dispatched digest email to ${params.to}: "${params.subject}"`);
+  logger.info(`[Mock Resend] Dispatched digest email to ${hashEmail(params.to)}: "${params.subject}"`);
   return { success: true, id: `mock_email_${Date.now()}` };
 }

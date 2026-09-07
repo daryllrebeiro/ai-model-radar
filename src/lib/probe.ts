@@ -5,6 +5,7 @@ import {
   EndpointHealthReport,
 } from '@/types/telemetry';
 import { saveEndpointTelemetry, getRecentEndpointTelemetry } from './db/queries';
+import { assertPublicHttpUrl, fetchWithSsrfRedirects, SsrfBlockedError } from './ssrf-guard';
 
 /**
  * Known public API base URLs per provider, used when a snapshot does not carry
@@ -87,7 +88,25 @@ async function probeOnce(
   const timeoutId = setTimeout(() => controller.abort(), opts.timeoutMs);
 
   try {
-    const response = await opts.fetchFn(target.url, {
+    // SSRF guard: raw_json endpoint URLs come from upstream ingestion data and
+    // must never point the prober at internal infrastructure.
+    try {
+      assertPublicHttpUrl(target.url);
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        clearTimeout(timeoutId);
+        return {
+          status: null,
+          latencyMs: null,
+          retryAfterSec: null,
+          bytes: 0,
+          timedOut: false,
+          error: 'Blocked: endpoint URL is not a public http(s) URL.',
+        };
+      }
+      throw err;
+    }
+    const response = await fetchWithSsrfRedirects(opts.fetchFn, target.url, {
       method: 'GET',
       headers: {
         'User-Agent': 'AI-Model-Radar/1.0 (endpoint-probe)',
