@@ -10,6 +10,11 @@ jobs:
   backup-db:
     name: Backup Database & Generate Manifest
     runs-on: ubuntu-latest
+    # Least privilege: the backup job only needs repo contents. The DATABASE_URL
+    # secret should belong to a backup-only Postgres role (SELECT-only, no
+    # DDL/DML) — never a superuser connection string.
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,4 +38,7 @@ jobs:
         with:
           name: database-backup-dump
           path: backups/
-          retention-days: 30
+          # Short retention: dumps contain user PII (emails, watchlists,
+          # usage profiles). Anyone with Actions read access can download
+          # artifacts — keep the window minimal.
+          retention-days: 7

@@ -18,6 +18,8 @@ This document maintains the complete inventory of operational secrets, third-par
 | `STRIPE_WEBHOOK_SECRET` | Billing | Optional (For Live Subscriptions) | Stripe Webhook signing secret (`whsec_...`). | Cryptographic HMAC-SHA256 signature verification for subscription webhooks. | 180 Days |
 | `RESEND_API_KEY` | Email Notifications | Optional (For Live Email) | Resend REST API Key (`re_...`). | Sending daily/weekly intelligence digests and alert notifications. | 180 Days |
 | `UNSUBSCRIBE_SECRET` | Security & Privacy | **YES** | HMAC signing key for generating one-click unsubscribe links. | Generating and verifying constant-time HMAC-SHA256 email tokens. | 1 Year |
+| `SLACK_SIGNING_SECRET` | Security & Integrations | **YES if Slack bot enabled** | Slack v0 HMAC verification for `/api/bot/slash`. | Verifying Slack slash-command signatures (+5min timestamp tolerance). | 1 Year |
+| `DISCORD_PUBLIC_KEY` | Security & Integrations | **YES if Discord bot enabled** | Ed25519 verification for `/api/bot/slash` Discord interactions. | Verifying Discord interaction signatures. | 1 Year (on bot re-install) |
 
 ---
 
@@ -43,6 +45,21 @@ This document maintains the complete inventory of operational secrets, third-par
    ```
 2. Update environment variable in hosting dashboard and GitHub Actions secret settings.
 3. Update cron job runners with the new Bearer Authorization header.
+
+### Instant user lockout (no server-side session revocation)
+Sessions are stateless JWTs (7-day expiry, 24h rolling refresh) — there is no
+server-side session kill switch. To lock out a compromised account immediately:
+1. Revoke the user's API keys: `revokeUserApiKeys('<email>')` (or per-key
+   `revokeApiKey(<key_hash>)`) — kills programmatic access at once.
+2. Downgrade + cancel via Stripe dashboard (webhook handler revokes paid keys
+   automatically on `customer.subscription.deleted`).
+3. Nuclear option: rotate `AUTH_SECRET` — invalidates **all** sessions
+   deployment-wide (all users re-authenticate via magic link).
+
+### Rotating bot platform secrets
+`SLACK_SIGNING_SECRET` / `DISCORD_PUBLIC_KEY` changes take effect on next
+deployment (read per-request from env). After rotation, the other platform
+keeps working; unset-both in production returns 503 (fail-closed).
 
 ---
 

@@ -1,0 +1,27 @@
+name: Nightly Load Test (k6, non-blocking)
+
+# Deliberately NOT a merge gate: load runs are slow and environment-sensitive.
+# Results are for trend-spotting (p95 latency, error rate) via the job summary.
+on:
+  schedule:
+    # Nightly at 03:30 UTC against the preview/staging deployment
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  k6:
+    name: k6 load (100 VUs, staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run load test
+        run: k6 run tests/load/k6-load-test.js
+        env:
+          TARGET_URL: ${{ secrets.STAGING_URL }}
+          API_KEY: ${{ secrets.LOAD_TEST_API_KEY }}
