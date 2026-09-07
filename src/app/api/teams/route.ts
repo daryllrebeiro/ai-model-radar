@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireFeature } from '@/lib/access-guard';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import { getTeamsForUser, createTeam, getTeamDetail } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
 
@@ -14,6 +15,9 @@ export async function GET(request: NextRequest) {
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
 
+    const limited = await checkSessionRateLimit(session.user.id, 'teams');
+    if (limited) return limited;
+
     const teams = await getTeamsForUser(session.user.email);
     return NextResponse.json({ teams, count: teams.length });
   } catch (err: any) {
@@ -25,6 +29,9 @@ export async function POST(request: NextRequest) {
   try {
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
+
+    const limited = await checkSessionRateLimit(session.user.id, 'teams');
+    if (limited) return limited;
 
     const body = await request.json().catch(() => null);
     const name = body?.name;

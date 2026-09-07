@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireFeature } from '@/lib/access-guard';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import { handleApiError } from '@/lib/api-error-handler';
 import { getLatestSnapshotsMap } from '@/lib/db/queries';
 import {
@@ -42,6 +43,9 @@ export async function GET(request: NextRequest) {
   try {
     const { session, error } = await requireFeature(request, 'GOVERNANCE');
     if (error) return error;
+
+    const limited = await checkSessionRateLimit(session.user.id, 'governance');
+    if (limited) return limited;
 
     const email = session.user.email;
     const rules = await getBudgetRulesForUser(email);

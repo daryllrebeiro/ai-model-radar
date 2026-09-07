@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import { deleteUserAccount, getUserById } from '@/lib/db/queries';
 import { cancelStripeSubscription } from '@/lib/billing/stripe';
-import { logger } from '@/lib/logger';
+import { logger, hashEmail } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,9 @@ export async function POST(request: NextRequest) {
     const userId = session.user.id;
     const email = session.user.email;
 
+    const limited = await checkSessionRateLimit(userId, 'user-delete', { limit: 10 });
+    if (limited) return limited;
+
     // Retrieve user record to verify active Stripe subscriptions before deleting
     const targetUser = await getUserById(userId);
     if (!targetUser) {
@@ -29,11 +33,11 @@ export async function POST(request: NextRequest) {
     // Cancel active Stripe subscription if present BEFORE local database records are deleted
     const subIdentifier = targetUser.stripe_subscription_id || targetUser.stripe_customer_id;
     if (subIdentifier) {
-      logger.info(`Initiating Stripe subscription cancellation for user ${targetUser.email} (${subIdentifier}) prior to deletion`);
+      logger.info(`Initiating Stripe subscription cancellation for user ${hashEmail(targetUser.email)} (${subIdentifier}) prior to deletion`);
       const cancelResult = await cancelStripeSubscription(subIdentifier);
 
       if (!cancelResult.success) {
-        logger.error(`Stripe subscription cancellation failed for ${targetUser.email}: ${cancelResult.error}`);
+        logger.error(`Stripe subscription cancellation failed for ${hashEmail(targetUser.email)}: ${cancelResult.error}`);
         return NextResponse.json(
           {
             error: 'Failed to cancel active Stripe subscription. Please manage your subscription in the billing portal before deleting your account.',
@@ -43,7 +47,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      logger.info(`Successfully canceled Stripe subscription for ${targetUser.email}`);
+      logger.info(`Successfully canceled Stripe subscription for ${hashEmail(targetUser.email)}`);
     }
 
     // Proceed with cascading local purge
@@ -52,7 +56,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User account not found during deletion' }, { status: 404 });
     }
 
-    logger.info(`User account ${email} (ID ${userId}) permanently deleted pursuant to GDPR/CCPA.`);
+    logger.info(`User account ${hashEmail(email)} (ID ${userId}) permanently deleted pursuant to GDPR/CCPA.`);
     return NextResponse.json({
       success: true,
       message: 'Account, subscriptions, and all associated credentials, watchlists, and alert rules permanently purged.',

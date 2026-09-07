@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createCheckoutSession, BILLING_PLANS } from '@/lib/billing/stripe';
 import { getSessionUser } from '@/lib/auth';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import { isBillingEnabled } from '@/lib/feature-flags';
+import { safeRedirectUrl } from '@/lib/env';
 import { handleApiError } from '@/lib/api-error-handler';
 
 export const dynamic = 'force-dynamic';
@@ -39,9 +41,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const limited = await checkSessionRateLimit(authSession.user.id, 'billing', { limit: 20 });
+    if (limited) return limited;
+
     const origin = request.headers.get('origin') || 'http://localhost:3000';
-    const targetSuccessUrl = successUrl || `${origin}/alerts?upgrade=success`;
-    const targetCancelUrl = cancelUrl || `${origin}/alerts?upgrade=cancelled`;
+    // Client-supplied redirect targets are allowlisted to our own origin —
+    // an unchecked successUrl is a post-payment phishing redirect.
+    const targetSuccessUrl = safeRedirectUrl(successUrl || `${origin}/alerts?upgrade=success`, '/alerts?upgrade=success');
+    const targetCancelUrl = safeRedirectUrl(cancelUrl || `${origin}/alerts?upgrade=cancelled`, '/alerts?upgrade=cancelled');
 
     const checkoutSession = await createCheckoutSession({
       customerEmail: email,

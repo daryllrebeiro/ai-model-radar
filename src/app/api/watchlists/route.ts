@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import {
   getUserWatchlist,
   addToWatchlist,
@@ -37,6 +38,9 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
+
+    const limited = await checkSessionRateLimit(session.user.id, 'watchlists');
+    if (limited) return limited;
 
     const body = await request.json();
     const { modelId, action } = body;

@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { getLatestSnapshotsMap, getEvents, upsertUsageProfile, getUsageProfileByEmail, UsageProfile } from '@/lib/db/queries';
 import { buildRecommendations, UsageProfileInput } from '@/lib/recommendation';
 import { detectMarketSignals } from '@/lib/signals';
-import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
+import { validatePublicApiRequest, apiJsonResponse, assertPayloadSize } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
 
 export const dynamic = 'force-dynamic';
@@ -48,9 +48,11 @@ export async function POST(request: NextRequest) {
     return apiJsonResponse({ error: 'authenticated API key required' }, auth.rateLimitHeaders, 401);
   }
 
-  let body: { profile?: InlineProfile } | null = null;
-  try {
-    body = await request.json();
+    let body: { profile?: InlineProfile } | null = null;
+    try {
+      const tooLarge = assertPayloadSize(request, 64 * 1024);
+      if (tooLarge) return tooLarge;
+      body = await request.json();
   } catch {
     return apiJsonResponse({ error: 'invalid JSON body' }, auth.rateLimitHeaders, 400);
   }

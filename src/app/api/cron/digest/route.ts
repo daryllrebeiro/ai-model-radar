@@ -6,6 +6,7 @@ import { detectMarketSignals } from '@/lib/signals';
 import { maxMonthlySavingsForProfile } from '@/lib/recommendation';
 import { buildMarketBrief } from '@/lib/briefs';
 import { secretsEqual } from '@/lib/secrets';
+import { logAuthDenied } from '@/lib/api-auth';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +23,11 @@ async function handleDigest(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  if (cronSecret && !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
+  // Fail closed: without a configured CRON_SECRET there is nothing to verify
+  // against, so the digest fan-out (per-recipient email sends) must not be
+  // remotely triggerable.
+  if (!cronSecret || !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
+    logAuthDenied('cron/digest', request, !cronSecret ? 'secret-unset' : 'bad-secret');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -134,3 +139,4 @@ async function handleDigest(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Digest generation failed' }, { status: 500 });
   }
 }
+

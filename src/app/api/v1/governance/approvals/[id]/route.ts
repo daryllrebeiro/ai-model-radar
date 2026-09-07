@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireFeature } from '@/lib/access-guard';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import { handleApiError } from '@/lib/api-error-handler';
 import {
   getBudgetRulesForUser,
@@ -22,6 +23,9 @@ export async function POST(
     const { session, error } = await requireFeature(request, 'GOVERNANCE');
     if (error) return error;
 
+    const limited = await checkSessionRateLimit(session.user.id, 'governance');
+    if (limited) return limited;
+
     const idRaw = Array.isArray(params.id) ? params.id[0] : params.id;
     const approvalId = Number(idRaw);
     if (!Number.isInteger(approvalId) || approvalId <= 0) {
@@ -42,8 +46,11 @@ export async function POST(
     }
 
     const rule = rules.find((r) => r.id === Number(approval.rule_id));
+    // Uniform 404 whether the approval is missing, outside the visible
+    // window, or bound to another tenant's rule — a distinct 403 would be a
+    // cross-tenant existence oracle.
     if (!rule) {
-      return NextResponse.json({ error: 'Approval bound to a rule you cannot manage' }, { status: 403 });
+      return NextResponse.json({ error: 'Approval not found or not accessible' }, { status: 404 });
     }
 
     const requesterRole = rule.team_id !== null && rule.team_id !== undefined
@@ -61,6 +68,14 @@ export async function POST(
     }
 
     const updated = await decideMigrationApproval(approvalId, decision, session.user.email);
+    if (!updated) {
+      // Lost a concurrent decision race, or the row left pending state
+      // between read and write: report conflict, not success.
+      return NextResponse.json(
+        { error: 'Approval already decided', approvalId },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ approval: updated });
   } catch (err: any) {
     return handleApiError(err, 'governance/approvals/:id POST');

@@ -1,15 +1,81 @@
 import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { getRecentEvents, getModelCurrentList } from '@/lib/db/queries';
 import { computeArbitrageOpportunities } from '@/lib/arbitrage';
 import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
 import { trackEvent } from '@/lib/analytics';
+import { globalRateLimiter, logAuthDenied, getClientIp } from '@/lib/api-auth';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
+const SLACK_TIMESTAMP_TOLERANCE_SEC = 60 * 5;
+const BOT_IP_LIMIT = 60;
+const BOT_IP_WINDOW_MS = 60 * 1000;
+
+/**
+ * Verifies a Slack slash-command request (v0 HMAC over v0:timestamp:body).
+ */
+function verifySlackSignature(rawBody: string, timestamp: string | null, signature: string | null, secret: string): boolean {
+  if (!timestamp || !signature) return false;
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > SLACK_TIMESTAMP_TOLERANCE_SEC) return false;
+  const expected =
+    'v0=' +
+    crypto.createHmac('sha256', secret).update(`v0:${timestamp}:${rawBody}`).digest('hex');
+  return expected.length === signature.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+}
+
+/**
+ * Verifies a Discord interaction (Ed25519 over timestamp+body).
+ */
+function verifyDiscordSignature(
+  rawBody: string,
+  timestamp: string | null,
+  signatureHex: string | null,
+  publicKeyHex: string
+): boolean {
+  if (!timestamp || !signatureHex) return false;
+  try {
+    const x = Buffer.from(publicKeyHex.replace(/^0x/, ''), 'hex').toString('base64url');
+    const key = crypto.createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x }, format: 'jwk' });
+    return crypto.verify(
+      null,
+      Buffer.from(timestamp + rawBody),
+      key,
+      Buffer.from(signatureHex, 'hex')
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
+    // Fail closed in production: an unsigned bot endpoint lets anyone burn
+    // DB-backed compute and speak in the workspace's trusted bot context.
+    const slackSecret = process.env.SLACK_SIGNING_SECRET;
+    const discordKey = process.env.DISCORD_PUBLIC_KEY;
+    if (process.env.NODE_ENV === 'production' && !slackSecret && !discordKey) {
+      return NextResponse.json({ error: 'Bot webhook not configured' }, { status: 503 });
+    }
+    if (process.env.NODE_ENV !== 'production' && !slackSecret && !discordKey) {
+      logger.warn('Bot webhook running WITHOUT platform signatures (non-production only).');
+    }
+
+    // Anonymous abuse brake: per-IP bucket shared across bot callers.
+    const ip = getClientIp(request);
+    const ipCheck = await globalRateLimiter.check(`ip:bot:${ip}`, BOT_IP_LIMIT, BOT_IP_WINDOW_MS);
+    if (!ipCheck.allowed) {
+      return NextResponse.json(
+        { error: 'Too Many Requests', retry_after_seconds: ipCheck.resetInSec },
+        { status: 429, headers: { 'Retry-After': ipCheck.resetInSec.toString() } }
+      );
+    }
+
     const contentType = request.headers.get('content-type') || '';
+    // Read the raw body once: signature verification needs the exact bytes.
+    const rawBody = await request.text();
     let commandText = '';
     let isSlack = false;
     let isDiscord = false;
@@ -17,12 +83,43 @@ export async function POST(request: NextRequest) {
     if (contentType.includes('application/x-www-form-urlencoded')) {
       // Slack slash command format
       isSlack = true;
-      const formData = await request.formData();
-      commandText = (formData.get('text') as string || '').trim();
+      if (slackSecret) {
+        const ok = verifySlackSignature(
+          rawBody,
+          request.headers.get('x-slack-request-timestamp'),
+          request.headers.get('x-slack-signature'),
+          slackSecret
+        );
+        if (!ok) {
+          logAuthDenied('bot/slash', request, 'bad-slack-signature');
+          return NextResponse.json({ error: 'Invalid Slack signature' }, { status: 401 });
+        }
+      }
+      const formData = new URLSearchParams(rawBody);
+      commandText = (formData.get('text') || '').trim();
     } else if (contentType.includes('application/json')) {
       // Discord application command or generic webhook
-      const body = await request.json();
-      
+      let body: any;
+      try {
+        body = JSON.parse(rawBody || '{}');
+      } catch {
+        return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+
+      const looksDiscord = body.type !== undefined || body.data !== undefined;
+      if (looksDiscord && discordKey) {
+        const ok = verifyDiscordSignature(
+          rawBody,
+          request.headers.get('x-signature-timestamp'),
+          request.headers.get('x-signature-ed25519'),
+          discordKey
+        );
+        if (!ok) {
+          logAuthDenied('bot/slash', request, 'bad-discord-signature');
+          return NextResponse.json({ error: 'Invalid Discord signature' }, { status: 401 });
+        }
+      }
+
       // Discord PING check (type: 1)
       if (body.type === 1) {
         return NextResponse.json({ type: 1 });

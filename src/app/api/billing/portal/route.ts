@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth';
+import { checkSessionRateLimit } from '@/lib/api-auth';
+import { safeRedirectUrl } from '@/lib/env';
 import { getUserByEmail } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
 
@@ -13,11 +15,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authenticated session required' }, { status: 401 });
     }
 
+    const limited = await checkSessionRateLimit(session.user.id, 'billing', { limit: 20 });
+    if (limited) return limited;
+
     const email = session.user.email;
     const body = await request.json().catch(() => ({}));
     const user = await getUserByEmail(email);
     const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-    const returnUrl = body.returnUrl || `${request.headers.get('origin') || 'http://localhost:3000'}/alerts`;
+    const returnUrl = safeRedirectUrl(
+      body.returnUrl || `${request.headers.get('origin') || 'http://localhost:3000'}/alerts`,
+      '/alerts'
+    );
 
     if (stripeSecretKey && stripeSecretKey.startsWith('sk_') && user?.stripe_customer_id) {
       const response = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {

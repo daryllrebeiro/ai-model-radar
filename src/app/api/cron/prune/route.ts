@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pruneOldRawJson } from '@/lib/db/queries';
 import { secretsEqual } from '@/lib/secrets';
+import { logAuthDenied } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,10 @@ async function handlePrune(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  if (cronSecret && !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
+  // Fail closed: without a configured CRON_SECRET there is nothing to verify
+  // against, so pruning must not be remotely triggerable.
+  if (!cronSecret || !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
+    logAuthDenied('cron/prune', request, !cronSecret ? 'secret-unset' : 'bad-secret');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -40,3 +44,4 @@ async function handlePrune(request: NextRequest) {
     );
   }
 }
+

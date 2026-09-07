@@ -1,7 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyStripeWebhookSignature } from '@/lib/billing/stripe';
-import { updateUserTier, createOrGetUser } from '@/lib/db/queries';
-import { logger } from '@/lib/logger';
+import {
+  updateUserTier,
+  createOrGetUser,
+  getUserByEmail,
+  isStripeEventProcessed,
+  markStripeEventProcessed,
+  revokeUserApiKeys,
+  restoreUserApiKeys,
+} from '@/lib/db/queries';
+import { logAuthDenied } from '@/lib/api-auth';
+import { logger, hashEmail } from '@/lib/logger';
+
+/** Tiers the webhook is allowed to write. Stripe metadata is attacker-shaped
+ *  once the HMAC is bypassed, so never accept it verbatim (PT-09). */
+function webhookTier(raw: unknown): 'developer' | 'production' {
+  return raw === 'production' ? 'production' : 'developer';
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -12,11 +27,19 @@ export async function POST(request: NextRequest) {
       request.headers.get('stripe-signature') || request.headers.get('Stripe-Signature');
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-    // Verify signature in production or whenever secret is provided
-    if (webhookSecret) {
+    // Fail closed: without a configured secret there is nothing to verify
+    // against, so an unverifiable delivery must be rejected — never applied.
+    if (!webhookSecret) {
+      if (process.env.NODE_ENV === 'production') {
+        logger.warn('Stripe webhook received but STRIPE_WEBHOOK_SECRET is not configured.');
+        return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
+      }
+      logger.warn('Stripe webhook signature check SKIPPED: STRIPE_WEBHOOK_SECRET unset (non-production only).');
+    } else {
       const isValid = verifyStripeWebhookSignature(rawPayload, signatureHeader, webhookSecret);
       if (!isValid) {
         logger.warn('Stripe webhook signature verification failed.');
+        logAuthDenied('billing/webhook', request, 'bad-signature');
         return NextResponse.json({ error: 'Invalid Stripe signature' }, { status: 400 });
       }
     }
@@ -24,11 +47,19 @@ export async function POST(request: NextRequest) {
     const event = JSON.parse(rawPayload);
     logger.info(`Received Stripe webhook event: ${event.type}`);
 
+    // Delivery idempotency, checked BEFORE work but marked AFTER commit: if
+    // the tier write below throws, the retry must re-apply rather than report
+    // {duplicate:true} on an unapplied payment (PT-06).
+    if (event.id && (await isStripeEventProcessed(event.id))) {
+      logger.info(`Stripe webhook event ${event.id} already processed; skipping.`);
+      return NextResponse.json({ received: true, duplicate: true });
+    }
+
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data?.object;
         const customerEmail = session.customer_email || session.metadata?.customerEmail;
-        const tier = session.metadata?.tier || 'developer';
+        const tier = webhookTier(session.metadata?.tier);
         const subscriptionId = session.subscription;
         const customerId = session.customer;
 
@@ -39,7 +70,10 @@ export async function POST(request: NextRequest) {
             stripe_customer_id: customerId,
           });
           await updateUserTier(customerEmail, tier, subscriptionId);
-          logger.info(`User ${customerEmail} successfully upgraded to ${tier} tier.`);
+          // Repurchase path: restore keys bulk-revoked by an earlier cancel
+          // so a returning customer is not locked out by PT-03's revoke.
+          await restoreUserApiKeys(customerEmail);
+          logger.info(`User ${hashEmail(customerEmail)} successfully upgraded to ${tier} tier.`);
         }
         break;
       }
@@ -48,7 +82,7 @@ export async function POST(request: NextRequest) {
         const subscription = event.data?.object;
         const customerId = subscription.customer;
         const status = subscription.status;
-        const tier = subscription.metadata?.tier || 'developer';
+        const tier = webhookTier(subscription.metadata?.tier);
 
         if (status === 'active') {
           await updateUserTier(customerId, tier, subscription.id);
@@ -61,7 +95,16 @@ export async function POST(request: NextRequest) {
         const customerId = subscription.customer;
         // Downgrade to free tier upon cancellation
         await updateUserTier(customerId, 'free');
-        logger.info(`Subscription cancelled for customer ${customerId}, downgraded to free.`);
+        // Kill the replay vector: stale paid-tier keys must not re-lift the
+        // downgraded tier via monotonic upgrade (PT-03).
+        const user = customerId ? await getUserByEmail(customerId) : null;
+        const ownerEmail = user?.email || (typeof customerId === 'string' && customerId.includes('@') ? customerId : null);
+        if (ownerEmail) {
+          const revoked = await revokeUserApiKeys(ownerEmail);
+          logger.info(`Subscription cancelled for customer ${customerId}, downgraded to free (${revoked} keys revoked).`);
+        } else {
+          logger.info(`Subscription cancelled for customer ${customerId}, downgraded to free.`);
+        }
         break;
       }
 
@@ -69,6 +112,8 @@ export async function POST(request: NextRequest) {
         // Ignore unhandled event types
         break;
     }
+
+    if (event.id) await markStripeEventProcessed(event.id, event.type);
 
     return NextResponse.json({ received: true });
   } catch (error: any) {

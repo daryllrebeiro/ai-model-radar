@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { getLatestSnapshotsMap, getEvents, getRecentEndpointTelemetry, getUsageProfileByEmail } from '@/lib/db/queries';
 import { getPriceDropForecasts } from '@/lib/forecast';
 import { detectMarketSignals } from '@/lib/signals';
-import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
+import { validatePublicApiRequest, apiJsonResponse, assertPayloadSize } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
 import { answerQuestion, AskContext, validateAnswer } from '@/lib/ask-answer';
 
@@ -32,6 +32,8 @@ export async function POST(request: NextRequest) {
 
   let body: any;
   try {
+    const tooLarge = assertPayloadSize(request, 64 * 1024);
+    if (tooLarge) return tooLarge;
     body = await request.json();
   } catch {
     return apiJsonResponse({ error: 'Invalid JSON body' }, auth.rateLimitHeaders, 400);

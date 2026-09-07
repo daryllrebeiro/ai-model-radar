@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireFeature } from '@/lib/access-guard';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import {
   getTeamRole,
   getTeamWatchlist,
@@ -29,6 +30,9 @@ export async function GET(
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
 
+    const limited = await checkSessionRateLimit(session.user.id, 'team-watchlist');
+    if (limited) return limited;
+
     const teamId = parseTeamId(params.teamId);
     if (!teamId) {
       return NextResponse.json({ error: 'Invalid team id' }, { status: 400 });
@@ -53,6 +57,9 @@ export async function POST(
   try {
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
+
+    const limited = await checkSessionRateLimit(session.user.id, 'team-watchlist');
+    if (limited) return limited;
 
     const teamId = parseTeamId(params.teamId);
     if (!teamId) {
@@ -85,6 +92,9 @@ export async function DELETE(
   try {
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
+
+    const limited = await checkSessionRateLimit(session.user.id, 'team-watchlist');
+    if (limited) return limited;
 
     const teamId = parseTeamId(params.teamId);
     if (!teamId) {

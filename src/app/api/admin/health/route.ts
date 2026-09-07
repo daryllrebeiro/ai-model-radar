@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getLatestIngestionRuns, getMarketStats } from '../../../../lib/db/queries';
 import { isPostgres } from '../../../../lib/db/client';
 import { secretsEqual } from '../../../../lib/secrets';
+import { logAuthDenied } from '../../../../lib/api-auth';
 import { getGitHubRateLimitStatus, getGitHubPollIntervalMinutes } from '../../../../lib/ingestion/github-labs';
 import { isBillingEnabled } from '../../../../lib/feature-flags';
 
@@ -11,6 +12,7 @@ export async function GET(request: NextRequest) {
   const adminSecret = process.env.ADMIN_SECRET;
 
   if (!adminSecret) {
+    logAuthDenied('admin/health', request, 'secret-unset');
     return NextResponse.json(
       { error: 'Admin authentication not configured.' },
       { status: 401 }
@@ -25,6 +27,7 @@ export async function GET(request: NextRequest) {
     secretsEqual(secretHeader, adminSecret);
 
   if (!isAuthorized) {
+    logAuthDenied('admin/health', request, 'bad-secret');
     return NextResponse.json(
       { error: 'Unauthorized: Valid ADMIN_SECRET bearer token or x-admin-secret header required.' },
       { status: 401 }

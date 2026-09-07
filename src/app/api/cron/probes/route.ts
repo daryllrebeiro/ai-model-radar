@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getLatestSnapshotsMap } from '@/lib/db/queries';
 import { runEndpointProbes } from '@/lib/probe';
 import { secretsEqual } from '@/lib/secrets';
+import { logAuthDenied } from '@/lib/api-auth';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +30,11 @@ async function handleProbes(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  if (cronSecret && !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
+  // Fail closed: without a configured CRON_SECRET there is nothing to verify
+  // against, so the probe cycle (outbound network fan-out) must not be
+  // remotely triggerable.
+  if (!cronSecret || !secretsEqual(authHeader, `Bearer ${cronSecret}`)) {
+    logAuthDenied('cron/probes', request, !cronSecret ? 'secret-unset' : 'bad-secret');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -62,3 +67,4 @@ async function handleProbes(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Probe cycle failed' }, { status: 500 });
   }
 }
+

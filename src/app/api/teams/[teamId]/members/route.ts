@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireFeature } from '@/lib/access-guard';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import { getTeam, getTeamRole, addTeamMember, removeTeamMember, getTeamMembers } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
 
@@ -25,6 +26,9 @@ export async function POST(
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
 
+    const limited = await checkSessionRateLimit(session.user.id, 'teams');
+    if (limited) return limited;
+
     const teamId = parseTeamId(params.teamId);
     if (!teamId) {
       return NextResponse.json({ error: 'Invalid team id' }, { status: 400 });
@@ -42,6 +46,14 @@ export async function POST(
     }
 
     const memberRole = body?.role === 'member' ? 'member' : body?.role === 'admin' ? 'admin' : 'member';
+    if (memberRole === 'admin') {
+      // Granting admin is ownership transfer-grade: team owner only. Any-admin
+      // approval would let one compromised admin mint infinite admins.
+      const team = await getTeam(teamId);
+      if (!team || team.owner_email.toLowerCase() !== session.user.email.toLowerCase()) {
+        return NextResponse.json({ error: 'Only the team owner can grant the admin role' }, { status: 403 });
+      }
+    }
     const member = await addTeamMember(teamId, email.trim(), memberRole);
     const members = await getTeamMembers(teamId);
     return NextResponse.json({ member, members }, { status: 201 });
@@ -57,6 +69,9 @@ export async function DELETE(
   try {
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
+
+    const limited = await checkSessionRateLimit(session.user.id, 'teams');
+    if (limited) return limited;
 
     const teamId = parseTeamId(params.teamId);
     if (!teamId) {

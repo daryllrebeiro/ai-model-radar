@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireFeature } from '@/lib/access-guard';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import {
   getTeam,
   getTeamRole,
@@ -30,6 +31,9 @@ export async function GET(
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
 
+    const limited = await checkSessionRateLimit(session.user.id, 'teams');
+    if (limited) return limited;
+
     const teamId = parseTeamId(params.teamId);
     if (!teamId) {
       return NextResponse.json({ error: 'Invalid team id' }, { status: 400 });
@@ -57,6 +61,9 @@ export async function PATCH(
   try {
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
+
+    const limited = await checkSessionRateLimit(session.user.id, 'teams');
+    if (limited) return limited;
 
     const teamId = parseTeamId(params.teamId);
     if (!teamId) {
@@ -92,14 +99,25 @@ export async function DELETE(
     const { session, error } = await requireFeature(request, 'TEAM_MANAGEMENT');
     if (error) return error;
 
+    const limited = await checkSessionRateLimit(session.user.id, 'teams');
+    if (limited) return limited;
+
     const teamId = parseTeamId(params.teamId);
     if (!teamId) {
       return NextResponse.json({ error: 'Invalid team id' }, { status: 400 });
     }
 
+    // Membership gate FIRST so outsiders cannot distinguish "no such team"
+    // (404) from "foreign team" (403): both yield the same 404. Only members
+    // ever reach the owner check below, where 403 is meaningful, not an oracle.
+    const callerRole = await getTeamRole(teamId, session.user.email);
+    if (!callerRole) {
+      return NextResponse.json({ error: 'Team not found or not accessible' }, { status: 404 });
+    }
+
     const team = await getTeam(teamId);
     if (!team) {
-      return NextResponse.json({ error: 'Team not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Team not found or not accessible' }, { status: 404 });
     }
     if (team.owner_email.toLowerCase() !== session.user.email.toLowerCase()) {
       return NextResponse.json({ error: 'Only the team owner can delete the workspace' }, { status: 403 });

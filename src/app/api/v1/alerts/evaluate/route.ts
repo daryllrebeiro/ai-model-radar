@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { getEvents } from '@/lib/db/queries';
-import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
+import { validatePublicApiRequest, apiJsonResponse, assertPayloadSize } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
 import { evaluateAdvancedAlertRules, DEFAULT_ALERT_CONFIG } from '@/lib/alerts';
 import { AlertRuleConfig } from '@/types/alerts';
@@ -33,6 +33,8 @@ export async function POST(request: NextRequest) {
       return guard.error;
     }
 
+    const tooLarge = assertPayloadSize(request, 64 * 1024);
+    if (tooLarge) return tooLarge;
     const body = (await request.json().catch(() => null)) || {};
     const config: AlertRuleConfig = { ...DEFAULT_ALERT_CONFIG, ...body.config };
 

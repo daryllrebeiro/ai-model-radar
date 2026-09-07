@@ -1,11 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyUnsubscribeToken } from '@/lib/email/resend';
-import { getActiveAlertRules, updateAlertRuleStatus } from '@/lib/db/queries';
+import { getActiveAlertRules, updateAlertRuleStatusById } from '@/lib/db/queries';
+import { globalRateLimiter, getClientIp } from '@/lib/api-auth';
 import { escapeHtml } from '@/lib/sanitize';
 
 export const dynamic = 'force-dynamic';
 
+// HMAC tokens are unguessable, but the endpoint still gets a per-IP brake so
+// it cannot be used for unthrottled probing or DB-backed spam.
+const UNSUB_IP_LIMIT = 30;
+const UNSUB_IP_WINDOW_MS = 60 * 1000;
+
 export async function GET(request: NextRequest) {
+  const ipCheck = await globalRateLimiter.check(`ip:unsub:${getClientIp(request)}`, UNSUB_IP_LIMIT, UNSUB_IP_WINDOW_MS);
+  if (!ipCheck.allowed) {
+    return NextResponse.json(
+      { error: 'Too Many Requests', retry_after_seconds: ipCheck.resetInSec },
+      { status: 429, headers: { 'Retry-After': ipCheck.resetInSec.toString() } }
+    );
+  }
+
   const email = request.nextUrl.searchParams.get('email');
   const token = request.nextUrl.searchParams.get('token');
 
@@ -24,7 +38,7 @@ export async function GET(request: NextRequest) {
 
     for (const rule of userRules) {
       if (rule.id) {
-        await updateAlertRuleStatus(rule.id, false);
+        await updateAlertRuleStatusById(rule.id, false);
       }
     }
 

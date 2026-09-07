@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import { exportUserData } from '@/lib/db/queries';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,9 @@ export async function GET(request: NextRequest) {
     }
 
     const userId = session.user.id;
+
+    const limited = await checkSessionRateLimit(userId, 'user-export', { limit: 10 });
+    if (limited) return limited;
 
     const exportBundle = await exportUserData(userId);
     if (!exportBundle) {

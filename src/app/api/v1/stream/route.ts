@@ -1,9 +1,15 @@
 import { NextRequest } from 'next/server';
 import { getEvents, getLatestSnapshotsMap } from '@/lib/db/queries';
-import { validatePublicApiRequest } from '@/lib/api-auth';
+import { validatePublicApiRequest, getClientIp } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
+import { streamSlotAcquire, streamSlotRelease } from '@/lib/stream-slots';
 
 export const dynamic = 'force-dynamic';
+
+// Bound SSE lifetime: Vercel terminates at maxDuration, so a connection can
+// at most poll ~12 times (60s / 5s). Clients reconnect for longer sessions.
+// Per-identity concurrency is capped via stream-slots (Slowloris guard).
+export const maxDuration = 60;
 
 const POLL_INTERVAL_MS = 5000;
 const KEEPALIVE_MS = 15000;
@@ -30,6 +36,18 @@ export async function GET(request: NextRequest) {
     return guard.error;
   }
 
+  // Identity for the connection cap: key owner when known, else client IP
+  // (same derivation as validatePublicApiRequest's rateLimitId).
+  const ip = getClientIp(request);
+  const identity = `stream:${auth.ownerEmail || `ip:${ip}`}`;
+  const slot = streamSlotAcquire(identity);
+  if (!slot) {
+    return new Response(JSON.stringify({ error: 'Too Many Requests', message: 'Too many concurrent streams for this identity.' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': '60' },
+    });
+  }
+
   const encoder = new TextEncoder();
   const controller = new AbortController();
   const signal = controller.signal;
@@ -37,6 +55,7 @@ export async function GET(request: NextRequest) {
   request.signal.addEventListener(
     'abort',
     () => {
+      streamSlotRelease(identity, slot);
       controller.abort();
     },
     { once: true }
@@ -108,6 +127,7 @@ export async function GET(request: NextRequest) {
         signal.addEventListener(
           'abort',
           () => {
+            streamSlotRelease(identity, slot);
             if (pollTimer) clearInterval(pollTimer);
             if (keepAliveTimer) clearInterval(keepAliveTimer);
           },
@@ -119,6 +139,7 @@ export async function GET(request: NextRequest) {
       }
     },
     cancel() {
+      streamSlotRelease(identity, slot);
       controller.abort();
     },
   });

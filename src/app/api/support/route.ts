@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { logger } from '@/lib/logger';
+import { logger, hashEmail } from '@/lib/logger';
+import { globalRateLimiter, getClientIp } from '@/lib/api-auth';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -10,8 +11,21 @@ const SupportRequestSchema = z.object({
   message: z.string().min(10).max(2000),
 });
 
+// Unauthenticated intake: per-IP brake against ticket/log spam (10/min).
+const SUPPORT_IP_LIMIT = 10;
+const SUPPORT_IP_WINDOW_MS = 60 * 1000;
+
 export async function POST(request: NextRequest) {
   try {
+    const ip = getClientIp(request);
+    const ipCheck = await globalRateLimiter.check(`ip:support:${ip}`, SUPPORT_IP_LIMIT, SUPPORT_IP_WINDOW_MS);
+    if (!ipCheck.allowed) {
+      return NextResponse.json(
+        { error: 'Too Many Requests', retry_after_seconds: ipCheck.resetInSec },
+        { status: 429, headers: { 'Retry-After': ipCheck.resetInSec.toString() } }
+      );
+    }
+
     const json = await request.json();
     const parsed = SupportRequestSchema.safeParse(json);
 
@@ -24,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     const { email, category } = parsed.data;
 
-    logger.info(`Support ticket created: [${category}] from ${email}`);
+    logger.info(`Support ticket created: [${category}] from ${hashEmail(email)}`);
 
     return NextResponse.json({
       success: true,

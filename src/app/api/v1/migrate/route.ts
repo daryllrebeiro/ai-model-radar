@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModelCurrentList } from '@/lib/db/queries';
 import { findMigrationAlternatives } from '@/lib/migration-advisor';
+import { validatePublicApiRequest } from '@/lib/api-auth';
 import { trackEvent } from '@/lib/analytics';
 import { logger } from '@/lib/logger';
 
@@ -8,10 +9,22 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
+    // Like every other v1 route: key/IP rate limiting applies here too.
+    const auth = await validatePublicApiRequest(request);
+    if (!auth.allowed && auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const model = request.nextUrl.searchParams.get('model');
     if (!model) {
       return NextResponse.json(
         { error: 'Missing required query parameter: model' },
+        { status: 400 }
+      );
+    }
+    if (model.length > 200) {
+      return NextResponse.json(
+        { error: 'Query parameter too long' },
         { status: 400 }
       );
     }

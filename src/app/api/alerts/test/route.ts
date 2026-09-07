@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deliverWebhookPayload } from '@/lib/webhooks';
 import { requireFeature } from '@/lib/access-guard';
+import { checkSessionRateLimit } from '@/lib/api-auth';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -13,8 +14,12 @@ const testWebhookSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const { error } = await requireFeature(request, 'PRICE_ALERTS_WEBHOOK');
+    const { session, error } = await requireFeature(request, 'PRICE_ALERTS_WEBHOOK');
     if (error) return error;
+
+    // Webhook test triggers outbound fetches — rate-limit tightly per user.
+    const limited = await checkSessionRateLimit(session.user.id, 'alerts-test', { limit: 10 });
+    if (limited) return limited;
 
     const body = await request.json();
     const parsed = testWebhookSchema.safeParse(body);
