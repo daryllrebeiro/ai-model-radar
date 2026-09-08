@@ -48,6 +48,23 @@ export function getPgPool(): Pool {
   return pgPool;
 }
 
+/**
+ * Drains the Postgres pool, waiting briefly for in-flight queries.
+ * Wired to SIGTERM/SIGINT in instrumentation.ts so deploys and local runs
+ * release connections instead of leaving them to idle-timeout on the server.
+ * Safe to call when the pool was never created (no-op).
+ */
+export async function closePool(): Promise<void> {
+  if (!pgPool) return;
+  const pool = pgPool;
+  pgPool = null;
+  try {
+    await pool.end();
+  } catch {
+    // Shutting down: nothing useful to do with the error.
+  }
+}
+
 // Local JSON/file storage fallback for instant local dev when no Postgres instance is configured
 interface LocalDbState {
   snapshots: Array<any>;

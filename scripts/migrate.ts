@@ -11,6 +11,12 @@ const SCHEMA_PATH = path.join(process.cwd(), 'src', 'lib', 'db', 'schema.sql');
 // into the baseline src/lib/db/schema.sql during early development and never
 // existed as separate files. The baseline is re-applied idempotently on every
 // run (CREATE TABLE/VIEW IF NOT EXISTS), so no history was lost.
+//
+// ROLLBACK POLICY: migrations are forward-only by design — there are no down
+// migrations. Each file runs inside its own transaction, so a failed file
+// rolls back cleanly. To undo an applied migration, restore from a pre-
+// migration backup: npm run db:backup before, npm run db:restore afterwards.
+// Never hand-edit schema_migrations; use migrationStatus() to inspect state.
 
 const EXPECTED_TABLES = [
   'model_snapshots',

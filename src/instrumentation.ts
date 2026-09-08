@@ -1,5 +1,8 @@
 import { validateEnv } from '@/lib/env';
 import { logger } from '@/lib/logger';
+import { closePool } from '@/lib/db/client';
+
+let shutdownHooked = false;
 
 export async function register() {
   // Validate environment variables on server boot
@@ -13,6 +16,18 @@ export async function register() {
       }
     } else {
       logger.info('Environment variables validated successfully on startup.');
+    }
+
+    // Graceful shutdown: drain the Postgres pool on SIGTERM/SIGINT so
+    // in-flight queries finish and connections are released instead of
+    // lingering server-side until idle timeout. Node runtime only; once.
+    if (!shutdownHooked) {
+      shutdownHooked = true;
+      for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+        process.on(signal, () => {
+          closePool().finally(() => process.exit(0));
+        });
+      }
     }
   }
 }
