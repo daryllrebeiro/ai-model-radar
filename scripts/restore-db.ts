@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { isPostgres, getPgPool, saveLocalState } from '../src/lib/db/client';
+import { bulkInsert } from '../src/lib/db/queries';
 import { logger } from '../src/lib/logger';
 
 // Canonical restore order: FK parents before children, independent of the
@@ -131,19 +132,21 @@ export async function restoreDatabase(backupFilePath: string, expectedChecksum: 
       }
       for (const table of tablesWithRows) {
         const rows = pgDump[table];
-        // Columns pre-validated above (bare identifiers only).
+        // Columns pre-validated above (bare identifiers only). Chunked
+        // multi-row replay shared with the poll write path — one round trip
+        // per 1,000 rows instead of one per row.
         const columns = Object.keys(rows[0]);
-        for (const row of rows) {
-          const values = columns.map((col) => {
-            const val = row[col];
-            return typeof val === 'object' && val !== null ? JSON.stringify(val) : val;
-          });
-          const placeholders = values.map((_, idx) => `$${idx + 1}`).join(', ');
-          await client.query(
-            `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`,
-            values
-          );
-        }
+        await bulkInsert(
+          client,
+          table,
+          columns,
+          rows.map((row: any) =>
+            columns.map((col) => {
+              const val = row[col];
+              return typeof val === 'object' && val !== null ? JSON.stringify(val) : val;
+            })
+          )
+        );
         // Advance the SERIAL sequence past the restored ids so subsequent
         // app INSERTs don't collide with restored primary keys.
         if (SERIAL_TABLES.has(table)) {

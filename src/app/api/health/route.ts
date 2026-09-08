@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMarketStats, getLatestSnapshotsMap } from '@/lib/db/queries';
+import { getMarketStats } from '@/lib/db/queries';
 import { isPostgres } from '@/lib/db/client';
 import { validatePublicApiRequest } from '@/lib/api-auth';
 
@@ -15,9 +15,8 @@ export async function GET(request: NextRequest) {
     }
 
     const stats = await getMarketStats();
-    const snapshotsMap = await getLatestSnapshotsMap();
 
-    const isHealthy = snapshotsMap.size > 0;
+    const isHealthy = stats.totalActiveModels > 0;
 
     return NextResponse.json({
       status: isHealthy ? 'healthy' : 'degraded',
