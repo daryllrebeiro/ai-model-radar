@@ -9,6 +9,38 @@ import { encodeCursor, decodeCursor } from '../pagination';
 import { normalizeTier } from '../feature-flags';
 
 /**
+ * Chunked multi-row INSERT: one round trip per batch instead of one per row.
+ * Table/column names are always internal constants at call sites (never user
+ * input); only values are bound as parameters. Chunk cap keeps parameter
+ * counts far below the Postgres 65535 limit (1000 rows × ≤10 cols).
+ */
+const BULK_CHUNK_ROWS = 1000;
+
+type Queryable = { query: (sql: string, params: any[]) => Promise<any> };
+
+async function bulkInsert(
+  client: Queryable,
+  table: string,
+  columns: string[],
+  rows: any[][]
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += BULK_CHUNK_ROWS) {
+    const batch = rows.slice(i, i + BULK_CHUNK_ROWS);
+    const placeholders: string[] = [];
+    const values: any[] = [];
+    batch.forEach((row, bi) => {
+      const base = bi * columns.length;
+      placeholders.push(`(${row.map((_, ci) => `$${base + ci + 1}`).join(', ')})`);
+      values.push(...row);
+    });
+    await client.query(
+      `INSERT INTO ${table} (${columns.join(', ')}) VALUES ${placeholders.join(', ')}`,
+      values
+    );
+  }
+}
+
+/**
  * Bulk insert snapshots
  */
 export async function insertSnapshots(snapshots: ModelSnapshot[]): Promise<void> {
@@ -19,25 +51,23 @@ export async function insertSnapshots(snapshots: ModelSnapshot[]): Promise<void>
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      for (const s of snapshots) {
-        await client.query(
-          `INSERT INTO model_snapshots 
-          (model_id, provider, name, price_prompt, price_completion, context_length, modality, is_free, raw_json, polled_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [
-            s.model_id,
-            s.provider,
-            s.name,
-            s.price_prompt,
-            s.price_completion,
-            s.context_length,
-            s.modality,
-            s.is_free,
-            JSON.stringify(s.raw_json),
-            s.polled_at,
-          ]
-        );
-      }
+      await bulkInsert(
+        client,
+        'model_snapshots',
+        ['model_id', 'provider', 'name', 'price_prompt', 'price_completion', 'context_length', 'modality', 'is_free', 'raw_json', 'polled_at'],
+        snapshots.map((s) => [
+          s.model_id,
+          s.provider,
+          s.name,
+          s.price_prompt,
+          s.price_completion,
+          s.context_length,
+          s.modality,
+          s.is_free,
+          JSON.stringify(s.raw_json),
+          s.polled_at,
+        ])
+      );
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -70,22 +100,20 @@ export async function insertEvents(events: ModelEvent[]): Promise<void> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      for (const e of events) {
-        await client.query(
-          `INSERT INTO model_events 
-          (model_id, event_type, old_value, new_value, pct_change, source, detected_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [
-            e.model_id,
-            e.event_type,
-            e.old_value ? JSON.stringify(e.old_value) : null,
-            e.new_value ? JSON.stringify(e.new_value) : null,
-            e.pct_change,
-            e.source,
-            e.detected_at,
-          ]
-        );
-      }
+      await bulkInsert(
+        client,
+        'model_events',
+        ['model_id', 'event_type', 'old_value', 'new_value', 'pct_change', 'source', 'detected_at'],
+        events.map((e) => [
+          e.model_id,
+          e.event_type,
+          e.old_value ? JSON.stringify(e.old_value) : null,
+          e.new_value ? JSON.stringify(e.new_value) : null,
+          e.pct_change,
+          e.source,
+          e.detected_at,
+        ])
+      );
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -455,6 +483,71 @@ export async function getModelCurrentList(params: {
     offset = 0,
   } = params;
 
+  // Postgres: push predicates, ORDER BY, and the LIMIT window into SQL over
+  // the model_current view (one latest row per model). COUNT(*) OVER()
+  // reports the filtered total in the same round trip, so Node never holds
+  // more than one page. Sort semantics mirror the legacy in-memory path:
+  // NULL prices sort last ascending / first descending (Postgres default),
+  // NULL context coerces to 0 via COALESCE.
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const where: string[] = ['1=1'];
+    const sqlParams: any[] = [];
+    let p = 1;
+
+    if (provider && provider !== 'All') {
+      where.push(`LOWER(provider) = LOWER($${p++})`);
+      sqlParams.push(provider);
+    }
+    if (isFree) {
+      where.push(`is_free = TRUE`);
+    }
+    if (search) {
+      // Escape LIKE metacharacters so user input can't widen the match.
+      const escaped = search.replace(/([%_\\])/g, '\\$1');
+      const pattern = `%${escaped}%`;
+      where.push(
+        `(model_id ILIKE $${p} ESCAPE '\\' OR name ILIKE $${p} ESCAPE '\\' OR provider ILIKE $${p} ESCAPE '\\')`
+      );
+      sqlParams.push(pattern);
+      p++;
+    }
+
+    const orderColumns: Record<string, string> = {
+      name: 'name',
+      price: 'price_prompt',
+      context: 'COALESCE(context_length, 0)',
+      updated: 'polled_at',
+    };
+    const orderCol = orderColumns[sortBy] || 'name';
+    const dir = sortOrder === 'desc' ? 'DESC' : 'ASC';
+    const safeLimit = Math.min(500, Math.max(1, Math.floor(limit)));
+    const safeOffset = Math.max(0, Math.floor(offset));
+
+    const res = await pool.query(
+      `SELECT *, COUNT(*) OVER() AS full_count FROM model_current
+       WHERE ${where.join(' AND ')}
+       ORDER BY ${orderCol} ${dir}
+       LIMIT $${p++} OFFSET $${p++}`,
+      [...sqlParams, safeLimit, safeOffset]
+    );
+    const total = res.rows.length > 0 ? Number(res.rows[0].full_count) : 0;
+    const models: ModelCurrent[] = res.rows.map((row: any) => ({
+      id: Number(row.id),
+      model_id: row.model_id,
+      provider: row.provider,
+      name: row.name,
+      price_prompt: row.price_prompt !== null ? Number(row.price_prompt) : null,
+      price_completion: row.price_completion !== null ? Number(row.price_completion) : null,
+      context_length: row.context_length !== null ? Number(row.context_length) : null,
+      modality: row.modality,
+      is_free: Boolean(row.is_free),
+      raw_json: typeof row.raw_json === 'string' ? JSON.parse(row.raw_json) : row.raw_json,
+      polled_at: row.polled_at,
+    }));
+    return { models, total };
+  }
+
   const snapshotMap = await getLatestSnapshotsMap();
   let models: ModelCurrent[] = Array.from(snapshotMap.values());
 
@@ -684,6 +777,69 @@ export async function getDealsData(): Promise<{
   topDrops7d: PriceDropDeal[];
   topDrops30d: PriceDropDeal[];
 }> {
+  // Postgres: no full-table hydration. Free models come from an indexed
+  // is_free filter on the one-row-per-model view; top drops come from a
+  // date-bounded, pct-ordered events query joined to current metadata.
+  // At most ~30 event rows plus the (small) free-model set cross into Node.
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const freeRes = await pool.query(`SELECT * FROM model_current WHERE is_free = TRUE`);
+    const freeModels: ModelCurrent[] = freeRes.rows.map((row: any) => ({
+      id: Number(row.id),
+      model_id: row.model_id,
+      provider: row.provider,
+      name: row.name,
+      price_prompt: row.price_prompt !== null ? Number(row.price_prompt) : null,
+      price_completion: row.price_completion !== null ? Number(row.price_completion) : null,
+      context_length: row.context_length !== null ? Number(row.context_length) : null,
+      modality: row.modality,
+      is_free: Boolean(row.is_free),
+      raw_json: typeof row.raw_json === 'string' ? JSON.parse(row.raw_json) : row.raw_json,
+      polled_at: row.polled_at,
+    }));
+
+    const dropRes = await pool.query(
+      `SELECT e.id, e.model_id, e.event_type,
+              e.old_value, e.new_value, e.pct_change, e.detected_at,
+              COALESCE(c.name, e.model_id) AS model_name,
+              COALESCE(c.provider, e.model_id) AS provider,
+              c.context_length AS context_length
+       FROM model_events e
+       LEFT JOIN model_current c ON c.model_id = e.model_id
+       WHERE e.event_type IN ('PRICE_CHANGE', 'BECAME_FREE')
+         AND e.detected_at >= $1
+         AND (e.pct_change < 0 OR e.event_type = 'BECAME_FREE')
+       ORDER BY e.pct_change ASC NULLS LAST, e.detected_at DESC
+       LIMIT 30`,
+      [thirtyDaysAgo]
+    );
+    const toDeal = (row: any): PriceDropDeal => {
+      const oldVal = typeof row.old_value === 'string' ? JSON.parse(row.old_value) : row.old_value;
+      const newVal = typeof row.new_value === 'string' ? JSON.parse(row.new_value) : row.new_value;
+      return {
+        model_id: row.model_id,
+        model_name: row.model_name || row.model_id,
+        provider: row.provider || extractProvider(row.model_id),
+        old_prompt: oldVal?.price_prompt ?? 0,
+        new_prompt: newVal?.price_prompt ?? 0,
+        old_completion: oldVal?.price_completion ?? 0,
+        new_completion: newVal?.price_completion ?? 0,
+        pct_change: row.pct_change !== null ? Number(row.pct_change) : (row.event_type === 'BECAME_FREE' ? -100 : 0),
+        detected_at: row.detected_at,
+        context_length: row.context_length !== null && row.context_length !== undefined ? Number(row.context_length) : null,
+      };
+    };
+    const topDrops30d = dropRes.rows.map(toDeal);
+    const topDrops7d = topDrops30d
+      .filter((d) => new Date(d.detected_at).getTime() >= new Date(sevenDaysAgo).getTime())
+      .slice(0, 20);
+
+    return { freeModels, topDrops7d, topDrops30d };
+  }
+
   const snapshotMap = await getLatestSnapshotsMap();
   const currentList = Array.from(snapshotMap.values());
   const freeModels = currentList.filter((m) => m.is_free);
@@ -739,6 +895,42 @@ export async function getDealsData(): Promise<{
  * Returns top-level market summary stats
  */
 export async function getMarketStats(): Promise<MarketStats> {
+  // Postgres: two aggregate queries, zero row hydration. Model totals come
+  // from the one-row-per-model view; event counters use FILTER over indexed
+  // detected_at/event_type predicates. Node holds O(1) rows either way.
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const modelRes = await pool.query(
+      `SELECT COUNT(*) AS total,
+              COUNT(DISTINCT provider) AS providers,
+              COUNT(*) FILTER (WHERE is_free) AS free,
+              MAX(polled_at) AS last_polled
+       FROM model_current`
+    );
+    const eventRes = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE (event_type = 'PRICE_CHANGE' AND pct_change < 0 OR event_type = 'BECAME_FREE') AND detected_at >= $1) AS drops24,
+         COUNT(*) FILTER (WHERE (event_type = 'PRICE_CHANGE' AND pct_change < 0 OR event_type = 'BECAME_FREE') AND detected_at >= $2) AS drops7,
+         COUNT(*) FILTER (WHERE event_type = 'NEW_MODEL' AND detected_at >= $2) AS new7
+       FROM model_events`,
+      [oneDayAgo, sevenDaysAgo]
+    );
+    const m = modelRes.rows[0];
+    const e = eventRes.rows[0];
+    return {
+      totalActiveModels: Number(m.total),
+      totalProviders: Number(m.providers),
+      totalFreeModels: Number(m.free),
+      priceDrops24h: Number(e.drops24),
+      priceDrops7d: Number(e.drops7),
+      newModels7d: Number(e.new7),
+      lastPolledAt: m.last_polled,
+    };
+  }
+
   const snapshotMap = await getLatestSnapshotsMap();
   const models = Array.from(snapshotMap.values());
   const providers = new Set(models.map((m) => m.provider));
@@ -862,42 +1054,38 @@ export async function savePollTransaction(
     try {
       await client.query('BEGIN');
 
-      for (const s of snapshots) {
-        await client.query(
-          `INSERT INTO model_snapshots 
-          (model_id, provider, name, price_prompt, price_completion, context_length, modality, is_free, raw_json, polled_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [
-            s.model_id,
-            s.provider,
-            s.name,
-            s.price_prompt,
-            s.price_completion,
-            s.context_length,
-            s.modality,
-            s.is_free,
-            JSON.stringify(s.raw_json),
-            s.polled_at,
-          ]
-        );
-      }
+      await bulkInsert(
+        client,
+        'model_snapshots',
+        ['model_id', 'provider', 'name', 'price_prompt', 'price_completion', 'context_length', 'modality', 'is_free', 'raw_json', 'polled_at'],
+        snapshots.map((s) => [
+          s.model_id,
+          s.provider,
+          s.name,
+          s.price_prompt,
+          s.price_completion,
+          s.context_length,
+          s.modality,
+          s.is_free,
+          JSON.stringify(s.raw_json),
+          s.polled_at,
+        ])
+      );
 
-      for (const e of events) {
-        await client.query(
-          `INSERT INTO model_events 
-          (model_id, event_type, old_value, new_value, pct_change, source, detected_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [
-            e.model_id,
-            e.event_type,
-            e.old_value ? JSON.stringify(e.old_value) : null,
-            e.new_value ? JSON.stringify(e.new_value) : null,
-            e.pct_change,
-            e.source,
-            e.detected_at,
-          ]
-        );
-      }
+      await bulkInsert(
+        client,
+        'model_events',
+        ['model_id', 'event_type', 'old_value', 'new_value', 'pct_change', 'source', 'detected_at'],
+        events.map((e) => [
+          e.model_id,
+          e.event_type,
+          e.old_value ? JSON.stringify(e.old_value) : null,
+          e.new_value ? JSON.stringify(e.new_value) : null,
+          e.pct_change,
+          e.source,
+          e.detected_at,
+        ])
+      );
 
       await client.query(
         `INSERT INTO ingestion_runs (source, started_at, finished_at, status, models_seen, events_emitted, error_detail)
@@ -1451,14 +1639,15 @@ export async function markStripeEventProcessed(eventId: string, eventType?: stri
 /**
  * Lists all users (used by admin tooling and the tier-normalization backfill).
  */
-export async function getAllUsers(): Promise<UserRecord[]> {
+export async function getAllUsers(limit = 5000): Promise<UserRecord[]> {
+  const max = Math.min(50000, Math.max(1, Math.floor(limit)));
   if (isPostgres()) {
     const pool = getPgPool();
-    const res = await pool.query(`SELECT * FROM users ORDER BY id`);
+    const res = await pool.query(`SELECT * FROM users ORDER BY id LIMIT $1`, [max]);
     return res.rows;
   }
   const state = getLocalState();
-  return [...(state.users || [])];
+  return [...(state.users || [])].slice(0, max);
 }
 
 /**
@@ -1753,8 +1942,9 @@ export async function createTeam(name: string, ownerEmail: string): Promise<Team
 /**
  * Lists teams the user can access (as owner or member).
  */
-export async function getTeamsForUser(email: string): Promise<Team[]> {
+export async function getTeamsForUser(email: string, limit = 500): Promise<Team[]> {
   const normalized = email.toLowerCase().trim();
+  const max = Math.min(5000, Math.max(1, Math.floor(limit)));
   if (isPostgres()) {
     const pool = getPgPool();
     const res = await pool.query(
@@ -1762,8 +1952,9 @@ export async function getTeamsForUser(email: string): Promise<Team[]> {
        FROM teams t
        LEFT JOIN team_members m ON m.team_id = t.id AND m.member_email = $1
        WHERE t.owner_email = $1 OR m.member_email = $1
-       ORDER BY t.created_at DESC`,
-      [normalized]
+       ORDER BY t.created_at DESC
+       LIMIT $2`,
+      [normalized, max]
     );
     return res.rows;
   } else {
@@ -1773,9 +1964,9 @@ export async function getTeamsForUser(email: string): Promise<Team[]> {
         .filter((m: any) => m.member_email === normalized)
         .map((m: any) => m.team_id)
     );
-    return (state.teams || []).filter(
-      (t: any) => t.owner_email === normalized || memberTeamIds.has(t.id)
-    );
+    return (state.teams || [])
+      .filter((t: any) => t.owner_email === normalized || memberTeamIds.has(t.id))
+      .slice(0, max);
   }
 }
 
@@ -2483,10 +2674,11 @@ export async function getBudgetRule(id: number): Promise<BudgetRule | null> {
  * team they belong to. Uses owner_user_id as primary key (stable), with
  * owner_email as fallback for rows not yet migrated.
  */
-export async function getBudgetRulesForUser(email: string): Promise<BudgetRule[]> {
+export async function getBudgetRulesForUser(email: string, limit = 500): Promise<BudgetRule[]> {
   const normalizedEmail = email.trim().toLowerCase();
   const user = await getUserByEmail(normalizedEmail);
   const userId = user?.id || null;
+  const max = Math.min(5000, Math.max(1, Math.floor(limit)));
 
   if (isPostgres()) {
     const pool = getPgPool();
@@ -2497,8 +2689,9 @@ export async function getBudgetRulesForUser(email: string): Promise<BudgetRule[]
         `SELECT * FROM budget_rules
          WHERE owner_user_id = $1
             OR team_id IN (SELECT team_id FROM team_members WHERE member_email = $2)
-         ORDER BY active DESC, id DESC`,
-        [userId, normalizedEmail]
+         ORDER BY active DESC, id DESC
+         LIMIT $3`,
+        [userId, normalizedEmail, max]
       );
     } else {
       // Fallback: user not in DB yet, use email
@@ -2506,8 +2699,9 @@ export async function getBudgetRulesForUser(email: string): Promise<BudgetRule[]
         `SELECT * FROM budget_rules
          WHERE owner_email = $1
             OR team_id IN (SELECT team_id FROM team_members WHERE member_email = $1)
-         ORDER BY active DESC, id DESC`,
-        [normalizedEmail]
+         ORDER BY active DESC, id DESC
+         LIMIT $2`,
+        [normalizedEmail, max]
       );
     }
     return mapBudgetRuleRows(res.rows);
@@ -2524,7 +2718,8 @@ export async function getBudgetRulesForUser(email: string): Promise<BudgetRule[]
         teamIds.has(Number(r.team_id))
       )
       .map(mapBudgetRuleRow)
-      .sort((a: any, b: any) => Number(b.id) - Number(a.id));
+      .sort((a: any, b: any) => Number(b.id) - Number(a.id))
+      .slice(0, max);
   }
 }
 
