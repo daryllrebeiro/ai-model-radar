@@ -27,6 +27,22 @@ export function getPgPool(): Pool {
         : false,
       max: 10,
       idleTimeoutMillis: 30000,
+      // A wedged connection must fail instead of wedging its holder: 5s to
+      // acquire, 15s per statement. Without these, one stuck query can pin a
+      // serverless instance until the platform kills it.
+      connectionTimeoutMillis: 5000,
+      statement_timeout: 15000,
+    });
+    // Idle-client errors (e.g. DB restart) otherwise crash the process
+    // silently via unhandled 'error' events — log them loudly instead.
+    pgPool.on('error', (err) => {
+      // eslint-disable-next-line no-console
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        message: 'Postgres pool idle-client error',
+        context: { service: 'ai-model-radar', error: err.message },
+      }));
     });
   }
   return pgPool;
@@ -51,6 +67,7 @@ interface LocalDbState {
   budget_alerts: Array<any>;
   migration_approvals: Array<any>;
   processed_stripe_event_ids: Array<any>;
+  fk_orphans: Array<any>;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
@@ -74,6 +91,7 @@ function emptyState(): LocalDbState {
     budget_alerts: [],
     migration_approvals: [],
     processed_stripe_event_ids: [],
+    fk_orphans: [],
   };
 }
 
@@ -104,6 +122,7 @@ function getLocalState(): LocalDbState {
       budget_alerts: parsed.budget_alerts || [],
       migration_approvals: parsed.migration_approvals || [],
       processed_stripe_event_ids: parsed.processed_stripe_event_ids || [],
+      fk_orphans: parsed.fk_orphans || [],
     };
   } catch {
     return emptyState();
@@ -218,8 +237,15 @@ function localQueryRunner<T = any>(sql: string, params: any[] = []): T[] {
     return [] as T[];
   }
 
-  // 4. Fallback: Querying handled in queries.ts local adapter
-  return [] as T[];
+  // 4. Fallback: fail loudly. The local adapter only simulates the statement
+  // shapes above; returning [] for anything else produces silent wrong
+  // answers that diverge from Postgres. Any new query shape must add an
+  // explicit local branch (or go through queries.ts, which has full
+  // per-function local adapters).
+  throw new Error(
+    `Unsupported statement in local backend: ${sql.slice(0, 120)}`
+  );
 }
 
 export { getLocalState, saveLocalState };
+

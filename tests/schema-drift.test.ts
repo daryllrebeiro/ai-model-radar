@@ -149,5 +149,75 @@ describe('P11.2: Schema & Migration Integrity', () => {
       const fkColumns = res.rows.map((r: any) => r.column_name);
       expect(fkColumns).toContain('user_id');
     });
+
+    it('fk_orphans review table exists with dedupe guard', async () => {
+      const pool = getPgPool();
+      const cols = await pool.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'fk_orphans'
+        ORDER BY ordinal_position
+      `);
+      const names = cols.rows.map((r: any) => r.column_name);
+      for (const c of ['id', 'tbl', 'row_id', 'email', 'reason', 'created_at']) {
+        expect(names).toContain(c);
+      }
+      // (tbl, row_id) uniqueness makes orphan recording idempotent
+      const uniq = await pool.query(`
+        SELECT COUNT(*) AS n FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = 'fk_orphans'
+          AND indexdef LIKE '%UNIQUE%'
+      `);
+      expect(Number(uniq.rows[0].n)).toBeGreaterThanOrEqual(1);
+    });
+
+    it('duplicate-variant usage_profiles merge to one linked row, ghosts land in fk_orphans', async () => {
+      const pool = getPgPool();
+      const stamp = `${Date.now()}`;
+      const base = `dedup.${stamp}@test.dev`;
+      await pool.query(`INSERT INTO users (email) VALUES ($1) ON CONFLICT DO NOTHING`, [base]);
+      await pool.query(`DELETE FROM usage_profiles WHERE email LIKE $1`, [`dedup.${stamp}%`]);
+      await pool.query(`DELETE FROM fk_orphans WHERE email LIKE $1`, [`%${stamp}%`]);
+      // Simulate legacy rows that bypassed app-level normalization. The older
+      // row (lower id) carries STALE values; the newer variant carries FRESH
+      // values the old row never had — the merge must preserve the fresh data
+      // (gate: keep-lowest-id alone silently drops it).
+      await pool.query(
+        `INSERT INTO usage_profiles (email, monthly_prompt_tokens, monthly_comp_tokens, primary_model_id, updated_at) VALUES ($1, 100, 50, 'old-model', NOW() - INTERVAL '30 days'), ($2, 9999, 8888, 'new-model', NOW())`,
+        [base, `  ${base.toUpperCase()}  `]
+      );
+      await pool.query(`INSERT INTO usage_profiles (email, primary_model_id) VALUES ($1, 'm')`, [`ghost.${stamp}@test.dev`]);
+      // Apply migration 012 file exactly as the runner would (fresh TX per file)
+      const fs = await import('fs');
+      const path = await import('path');
+      const sql = fs.readFileSync(path.join(process.cwd(), 'migrations', '012_fk_orphan_dedupe_and_review.sql'), 'utf-8');
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(sql);
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+      const linked = await pool.query(
+        `SELECT id, email, user_id, monthly_prompt_tokens, monthly_comp_tokens, primary_model_id FROM usage_profiles WHERE LOWER(TRIM(email)) = $1 OR email = $2`,
+        [base, `ghost.${stamp}@test.dev`]
+      );
+      const good = linked.rows.filter((r: any) => r.email !== `ghost.${stamp}@test.dev`);
+      expect(good).toHaveLength(1);
+      expect(good[0].user_id).not.toBeNull();
+      // Newest values survive the merge — this is the data-loss gate.
+      expect(Number(good[0].monthly_prompt_tokens)).toBe(9999);
+      expect(Number(good[0].monthly_comp_tokens)).toBe(8888);
+      expect(good[0].primary_model_id).toBe('new-model');
+      const orphans = await pool.query(`SELECT tbl, email FROM fk_orphans WHERE email = $1`, [`ghost.${stamp}@test.dev`]);
+      expect(orphans.rows.length).toBeGreaterThanOrEqual(1);
+      expect(orphans.rows[0].tbl).toBe('usage_profiles');
+      // Cleanup
+      await pool.query(`DELETE FROM usage_profiles WHERE email LIKE $1 OR email = $2`, [`dedup.${stamp}%`, `ghost.${stamp}@test.dev`]);
+      await pool.query(`DELETE FROM fk_orphans WHERE email LIKE $1`, [`%${stamp}%`]);
+    });
   }
 });

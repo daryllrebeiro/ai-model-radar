@@ -55,6 +55,7 @@ export async function createDatabaseBackup(outputDir = path.join(process.cwd(), 
       'alert_rules',
       'endpoint_telemetry',
       'processed_stripe_event_ids',
+      'fk_orphans',
     ];
     for (const table of tables) {
       try {

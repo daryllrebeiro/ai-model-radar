@@ -1,4 +1,5 @@
--- AI Model Radar Database Schema (PostgreSQL & SQLite compatible)
+-- AI Model Radar Database Schema (PostgreSQL only — uses BIGSERIAL, JSONB,
+-- TIMESTAMPTZ, and DISTINCT ON, none of which SQLite supports)
 
 -- 1. Immutable log of every poll snapshot per model
 CREATE TABLE IF NOT EXISTS model_snapshots (
@@ -267,8 +268,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_migration_approvals_pending_dedup
 
 -- 15. Processed Stripe webhook event ids (idempotency) — one row per
 -- delivered event.id; the PK rejects re-deliveries (Stripe retries).
-CREATE TABLE IF NOT EXISTS processed_stripe_event_ids (
-    event_id              TEXT PRIMARY KEY,
-    event_type            VARCHAR(80),
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+  CREATE TABLE IF NOT EXISTS processed_stripe_event_ids (
+      event_id              TEXT PRIMARY KEY,
+      event_type            VARCHAR(80),
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  -- 16. FK orphan review queue (migration 012). Rows whose stored email
+  -- matches no users row are recorded here instead of rotting as silent NULLs.
+  CREATE TABLE IF NOT EXISTS fk_orphans (
+      id            SERIAL PRIMARY KEY,
+      tbl           VARCHAR(64) NOT NULL,
+      row_id        VARCHAR(64) NOT NULL,
+      email         VARCHAR(255),
+      reason        VARCHAR(255) NOT NULL DEFAULT 'no matching users row',
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tbl, row_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_fk_orphans_tbl ON fk_orphans(tbl);

@@ -27,6 +27,7 @@ const RESTORE_ORDER = [
     'alert_rules',
     'endpoint_telemetry',
     'processed_stripe_event_ids',
+    'fk_orphans',
   ];
 
 // Tables with SERIAL/BIGSERIAL primary keys whose sequences must be
@@ -49,6 +50,7 @@ const SERIAL_TABLES = new Set([
     'digest_deliveries',
     'alert_rules',
     'endpoint_telemetry',
+    'fk_orphans',
   ]);
 
 const VALID_TABLES = new Set([
@@ -90,6 +92,20 @@ export async function restoreDatabase(backupFilePath: string, expectedChecksum: 
     }
   }
 
+  // Validate column names up front, for BOTH backends: dump keys are
+  // untrusted input, and a hostile key must fail here — never reach SQL in
+  // the Postgres branch nor silently persist in the local branch.
+  for (const [table, rows] of Object.entries(pgDump)) {
+    if (!Array.isArray(rows) || rows.length === 0) continue;
+    const first = rows[0];
+    if (typeof first !== 'object' || first === null) continue;
+    for (const col of Object.keys(first)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(col)) {
+        throw new Error(`Unsafe column name "${col}" in table "${table}". Restore rejected for safety.`);
+      }
+    }
+  }
+
   const restoredTables: Record<string, number> = {};
 
   if (isPostgres()) {
@@ -115,6 +131,7 @@ export async function restoreDatabase(backupFilePath: string, expectedChecksum: 
       }
       for (const table of tablesWithRows) {
         const rows = pgDump[table];
+        // Columns pre-validated above (bare identifiers only).
         const columns = Object.keys(rows[0]);
         for (const row of rows) {
           const values = columns.map((col) => {
