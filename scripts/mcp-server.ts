@@ -5,6 +5,15 @@
  * Exposes the live radar database to MCP clients (Claude Desktop, Cursor, opencode
  * MCP support, etc.) as queryable tools plus a `model://{model_id}` resource template.
  *
+ * TRUST BOUNDARY: stdio only, local-trust. This server enforces no caller
+ * identity — tool arguments such as governance `email` are convenience
+ * filters, not access controls. Anyone who can launch this process can
+ * already read DATABASE_URL from the environment, so there is no privilege
+ * boundary to bypass here. NEVER expose these tools over a network transport
+ * (SSE/HTTP); a remote caller would inherit full database read access with
+ * no authentication. If a network transport is ever added, bind every tool
+ * to an authenticated session exactly like its REST counterpart.
+ *
  * Run with:  npm run mcp:serve  (or: npx tsx scripts/mcp-server.ts)
  * Client config example:
  *   "mcpServers": {

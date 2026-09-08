@@ -3,6 +3,7 @@ import { getModelDetail } from '@/lib/db/queries';
 import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
 import { trackEvent } from '@/lib/analytics';
 import { escapeXml, sanitizeColor } from '@/lib/sanitize';
+import { validatePublicApiRequest } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,12 @@ function calculateTextWidth(text: string): number {
 
 export async function GET(request: NextRequest, { params }: BadgeRouteProps) {
   try {
+    // Embeddable image endpoint: throttled per key/IP like other public reads.
+    const auth = await validatePublicApiRequest(request);
+    if (!auth.allowed && auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const rawPath = Array.isArray(params.id) ? params.id.join('/') : params.id;
     // Strip trailing /price.svg, /price, or .svg
     const modelId = decodeURIComponent(rawPath)

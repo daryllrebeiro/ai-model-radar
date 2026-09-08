@@ -2,7 +2,7 @@ import type { NextAuthOptions } from 'next-auth';
 import type { SessionStrategy } from 'next-auth';
 import EmailProvider from 'next-auth/providers/email';
 import { createOrGetUser, getUserByEmail } from './db/queries';
-import { logger } from './logger';
+import { logger, hashEmail } from './logger';
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -13,7 +13,7 @@ export const authOptions: NextAuthOptions = {
       sendVerificationRequest: async ({ identifier, url }) => {
         const resendApiKey = process.env.RESEND_API_KEY;
         if (!resendApiKey || !resendApiKey.startsWith('re_')) {
-          logger.info(`[Auth Dev Mode] Magic link for ${identifier}: ${url}`);
+          logger.info(`[Auth Dev Mode] Magic link for ${hashEmail(identifier)}: ${url}`);
           return;
         }
 
@@ -72,7 +72,7 @@ export const authOptions: NextAuthOptions = {
           const dbUser = await createOrGetUser({ email: user.email });
           (user as any).id = String(dbUser.id);
         } catch (err: any) {
-          logger.error(`Auth signIn callback failed for ${user.email}: ${err.message}`);
+          logger.error(`Auth signIn callback failed for ${hashEmail(user.email)}: ${err.message}`);
           return false;
         }
       }
@@ -107,4 +107,22 @@ export const authOptions: NextAuthOptions = {
     },
   },
   secret: process.env.AUTH_SECRET,
+  // Pin session cookie flags explicitly instead of relying on framework
+  // defaults: httpOnly always, SameSite=Lax (cross-site POSTs never carry the
+  // cookie, which neuters CSRF against state-changing routes), Secure in
+  // production (`__Secure-` prefix enforces it). Non-prod keeps plain http.
+  cookies: {
+    sessionToken: {
+      name:
+        process.env.NODE_ENV === 'production'
+          ? '__Secure-next-auth.session-token'
+          : 'next-auth.session-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+      },
+    },
+  },
 };

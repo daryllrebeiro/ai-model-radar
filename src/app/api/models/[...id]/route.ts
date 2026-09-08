@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModelDetail } from '@/lib/db/queries';
+import { validatePublicApiRequest } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,12 @@ export async function GET(
   { params }: { params: { id: string[] } }
 ) {
   try {
+    // Same key/IP rate limiting as the v1 twin.
+    const auth = await validatePublicApiRequest(request);
+    if (!auth.allowed && auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const rawId = Array.isArray(params.id) ? params.id.join('/') : params.id;
     const modelId = decodeURIComponent(rawId);
 

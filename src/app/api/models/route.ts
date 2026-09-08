@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModelCurrentList } from '@/lib/db/queries';
+import { validatePublicApiRequest } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
+    // Same key/IP rate limiting as the v1 twin: this legacy route was
+    // reachable with no auth and no throttle (proven: 70 rapid hits, 0 429s).
+    const auth = await validatePublicApiRequest(request);
+    if (!auth.allowed && auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const { searchParams } = new URL(request.url);
     const search = searchParams.get('q') || undefined;
     const provider = searchParams.get('provider') || undefined;

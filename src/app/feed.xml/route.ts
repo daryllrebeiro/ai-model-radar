@@ -1,13 +1,20 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getEvents } from '@/lib/db/queries';
 import { getEventSummary } from '@/lib/utils';
 import { escapeXml, sanitizeCdata } from '@/lib/sanitize';
 import { baseUrl } from '@/lib/env';
+import { validatePublicApiRequest } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    // Public read surface: allow anonymous but throttle per key/IP.
+    const auth = await validatePublicApiRequest(request);
+    if (!auth.allowed && auth.errorResponse) {
+      return auth.errorResponse;
+    }
+
     const { events } = await getEvents({ limit: 50 });
     const siteUrl = baseUrl();
 

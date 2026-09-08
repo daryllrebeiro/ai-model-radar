@@ -41,14 +41,14 @@ export async function POST(
     const rules = await getBudgetRulesForUser(session.user.email);
     const approvals = await getMigrationApprovals({ limit: 200 });
     const approval = approvals.find((a) => a.id === approvalId);
+    // Uniform 404 + IDENTICAL body for missing, out-of-window, or
+    // another-tenant approvals — even differing messages are an existence
+    // oracle, so all three cases share one message.
     if (!approval || approval.rule_id === null || approval.rule_id === undefined) {
-      return NextResponse.json({ error: 'Approval not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Approval not found or not accessible' }, { status: 404 });
     }
 
     const rule = rules.find((r) => r.id === Number(approval.rule_id));
-    // Uniform 404 whether the approval is missing, outside the visible
-    // window, or bound to another tenant's rule — a distinct 403 would be a
-    // cross-tenant existence oracle.
     if (!rule) {
       return NextResponse.json({ error: 'Approval not found or not accessible' }, { status: 404 });
     }

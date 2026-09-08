@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     // Cancel active Stripe subscription if present BEFORE local database records are deleted
     const subIdentifier = targetUser.stripe_subscription_id || targetUser.stripe_customer_id;
     if (subIdentifier) {
-      logger.info(`Initiating Stripe subscription cancellation for user ${hashEmail(targetUser.email)} (${subIdentifier}) prior to deletion`);
+      logger.info(`Initiating Stripe subscription cancellation for user ${hashEmail(targetUser.email)} (${hashEmail(subIdentifier)}) prior to deletion`);
       const cancelResult = await cancelStripeSubscription(subIdentifier);
 
       if (!cancelResult.success) {

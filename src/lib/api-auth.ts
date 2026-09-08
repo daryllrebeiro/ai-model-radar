@@ -243,14 +243,28 @@ export async function validatePublicApiRequest(
 
   const check = await limiter.check(rateLimitId, tierConfig.limit, tierConfig.windowMs);
 
+  // CORS allowlist: ALLOWED_ORIGINS (comma-separated) pins browser access to
+  // documented consumers and echoes back a matching Origin with Vary.
+  // Unset (or non-matching Origin) falls back to '*' for the public,
+  // unauthenticated catalog surface — no credentials are ever accepted
+  // cross-origin (no Allow-Credentials), so '*' cannot exfiltrate sessions.
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  const requestOrigin = (request.headers.get('origin') || '').replace(/\/$/, '');
+  const corsOrigin =
+    requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : '*';
+
   const rateLimitHeaders: Record<string, string> = {
     'X-RateLimit-Limit': check.limit.toString(),
     'X-RateLimit-Remaining': check.remaining.toString(),
     'X-RateLimit-Reset': check.resetInSec.toString(),
     'X-RateLimit-Tier': tier,
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': corsOrigin,
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key',
+    ...(corsOrigin !== '*' ? { Vary: 'Origin' } : {}),
   };
 
   if (!check.allowed) {

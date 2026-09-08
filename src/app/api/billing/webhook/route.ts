@@ -29,12 +29,17 @@ export async function POST(request: NextRequest) {
 
     // Fail closed: without a configured secret there is nothing to verify
     // against, so an unverifiable delivery must be rejected — never applied.
+    // The ONLY exception is an explicit operator opt-in for local development
+    // (ALLOW_UNSIGNED_WEBHOOKS=true), which is forcibly ignored in production
+    // so a staging flag can never leak into a real deployment.
+    const allowUnsigned =
+      process.env.ALLOW_UNSIGNED_WEBHOOKS === 'true' && process.env.NODE_ENV !== 'production';
     if (!webhookSecret) {
-      if (process.env.NODE_ENV === 'production') {
+      if (process.env.NODE_ENV === 'production' || !allowUnsigned) {
         logger.warn('Stripe webhook received but STRIPE_WEBHOOK_SECRET is not configured.');
         return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
       }
-      logger.warn('Stripe webhook signature check SKIPPED: STRIPE_WEBHOOK_SECRET unset (non-production only).');
+      logger.warn('Stripe webhook signature check SKIPPED via ALLOW_UNSIGNED_WEBHOOKS (non-production only).');
     } else {
       const isValid = verifyStripeWebhookSignature(rawPayload, signatureHeader, webhookSecret);
       if (!isValid) {
@@ -101,9 +106,9 @@ export async function POST(request: NextRequest) {
         const ownerEmail = user?.email || (typeof customerId === 'string' && customerId.includes('@') ? customerId : null);
         if (ownerEmail) {
           const revoked = await revokeUserApiKeys(ownerEmail);
-          logger.info(`Subscription cancelled for customer ${customerId}, downgraded to free (${revoked} keys revoked).`);
+          logger.info(`Subscription cancelled for customer ${hashEmail(customerId)}, downgraded to free (${revoked} keys revoked).`);
         } else {
-          logger.info(`Subscription cancelled for customer ${customerId}, downgraded to free.`);
+          logger.info(`Subscription cancelled for customer ${hashEmail(customerId)}, downgraded to free.`);
         }
         break;
       }

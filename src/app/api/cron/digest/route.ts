@@ -62,9 +62,23 @@ async function handleDigest(request: NextRequest) {
 
     // De-duplicate recipient emails
     const uniqueEmails = Array.from(new Set(emailRecipients));
+    // Bound the fan-out: one cron tick sends to at most MAX_DIGEST_RECIPIENTS
+    // recipients. Without a cap, a mass-created rule set turns this endpoint
+    // into an outbound spam relay that also blows the serverless time budget.
+    // Overflow is reported (not silently dropped) so ops can raise the cap or
+    // shard runs; a future queue worker should carry overflow to next tick.
+    const MAX_DIGEST_RECIPIENTS = Math.max(
+      1,
+      Number(process.env.DIGEST_MAX_RECIPIENTS || 500)
+    );
+    const batch = uniqueEmails.slice(0, MAX_DIGEST_RECIPIENTS);
+    const deferred = uniqueEmails.length - batch.length;
+    if (deferred > 0) {
+      logger.warn(`Digest fan-out capped: ${deferred} recipients deferred (cap ${MAX_DIGEST_RECIPIENTS}).`);
+    }
     let deliveredCount = 0;
 
-    for (const email of uniqueEmails) {
+    for (const email of batch) {
       const userWatchlist = await getUserWatchlistByEmail(email);
 
       const brief = buildMarketBrief({
@@ -130,6 +144,8 @@ async function handleDigest(request: NextRequest) {
       timeframe,
       eventsIncluded: recentEvents.length,
       recipientsTargeted: uniqueEmails.length,
+      recipientsAttempted: batch.length,
+      recipientsDeferred: deferred,
       deliveredCount,
       briefsDelivered: deliveredCount,
       timestamp: new Date().toISOString(),
