@@ -11,9 +11,9 @@ export function uniqueEmail(prefix: string): string {
   return `${prefix}.${Date.now()}.${Math.floor(Math.random() * 1e6)}@test.dev`;
 }
 
-/** Seeds user → team → personal + team budget rules; returns all handles. */
-export async function seedTeamWithGovernance(prefix = 'hx') {
-  const email = uniqueEmail(`${prefix}.owner`);
+/** Seeds user → team → personal + team budget rules; returns all handles. Pass an explicit email for deterministic cross-run seeding (e.g. parity tests). */
+export async function seedTeamWithGovernance(prefix = 'hx', email?: string) {
+  email = email || uniqueEmail(`${prefix}.owner`);
   const user = await createOrGetUser({ email });
   const team = await createTeam(`${prefix} team ${Date.now()}`, email);
   const personal = await createBudgetRule({

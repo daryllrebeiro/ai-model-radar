@@ -3,6 +3,9 @@ import {
   getModelCurrentList,
   getEvents,
   getBudgetRulesForUser,
+  getUserByEmail,
+  addToWatchlist,
+  getUserWatchlist,
 } from '../src/lib/db/queries';
 import { seedTeamWithGovernance, seedCatalog } from './helpers';
 
@@ -21,15 +24,23 @@ describe('Cross-backend parity (Postgres <=> local JSON)', () => {
     const prefix = `parity.${Date.now()}.${Math.floor(Math.random() * 1e6)}`;
 
     const runSuite = async () => {
-      await seedTeamWithGovernance(prefix);
+      // Deterministic seeds: both engine runs must see identical input.
+      const ownerEmail = `${prefix}.owner@test.dev`;
+      await seedTeamWithGovernance(prefix, ownerEmail);
       await seedCatalog(prefix);
-      const gov = await seedTeamWithGovernance(`${prefix}.gov`);
+      const gov = await seedTeamWithGovernance(`${prefix}.gov`, `${prefix}.gov.owner@test.dev`);
       const [list, events, rules] = await Promise.all([
         getModelCurrentList({ search: prefix, limit: 100 }),
         getEvents({ search: prefix, limit: 50 }),
         getBudgetRulesForUser(gov.email),
       ]);
+      // Users + watchlists: same seed, both engines must agree.
+      const seen = await getUserByEmail(gov.email);
+      await addToWatchlist(seen!.id, `${prefix}/m0`);
+      const watchlist = await getUserWatchlist(seen!.id);
       return {
+        user: seen ? { email: seen.email, tier: seen.tier } : null,
+        watchlist: [...watchlist].sort(),
         models: list.models
           .filter((m) => m.model_id.startsWith(prefix))
           .map((m) => ({
