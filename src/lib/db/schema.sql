@@ -245,6 +245,27 @@ CREATE TABLE IF NOT EXISTS budget_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_budget_alerts_rule_time ON budget_alerts (rule_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_budget_alerts_type ON budget_alerts (alert_type, created_at DESC);
+CREATE TABLE IF NOT EXISTS shadow_ai_findings (
+      id                    BIGSERIAL PRIMARY KEY,
+      model_id              TEXT NOT NULL,
+      scope                 VARCHAR(20) NOT NULL DEFAULT 'personal',
+      team_id               INT REFERENCES teams(id) ON DELETE CASCADE,
+      owner_email           VARCHAR(255) NOT NULL,
+      owner_user_id         INT REFERENCES users(id) ON DELETE SET NULL,
+      first_seen            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      estimated_monthly_usd NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      reason                TEXT NOT NULL DEFAULT '',
+      status                VARCHAR(20) NOT NULL DEFAULT 'open',
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_shadow_personal
+  ON shadow_ai_findings (model_id, owner_email) WHERE scope = 'personal';
+CREATE UNIQUE INDEX IF NOT EXISTS ux_shadow_team
+  ON shadow_ai_findings (model_id, team_id) WHERE scope = 'team';
+CREATE INDEX IF NOT EXISTS idx_shadow_status_seen
+  ON shadow_ai_findings (status, last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_shadow_owner ON shadow_ai_findings (owner_email);
 
 -- 14. Migration Switch Approvals (Enterprise) — guardrail over F3 recommendations
 CREATE TABLE IF NOT EXISTS migration_approvals (

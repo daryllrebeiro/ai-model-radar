@@ -59,6 +59,24 @@ export interface ShadowAiFinding {
   reason: string;
 }
 
+export type ShadowFindingStatus = 'open' | 'acknowledged' | 'dismissed';
+
+/** Persistent Shadow-AI Discovery feed row (015_shadow_ai_findings). */
+export interface ShadowAiRecord {
+  id?: number;
+  model_id: string;
+  scope: BudgetRuleScope;
+  team_id?: number | null;
+  owner_email: string;
+  owner_user_id?: number | null;
+  first_seen?: string;
+  last_seen?: string;
+  estimated_monthly_usd: number;
+  reason: string;
+  status: ShadowFindingStatus;
+  created_at?: string;
+}
+
 export interface MigrationApproval {
   id?: number;
   team_id?: number | null;

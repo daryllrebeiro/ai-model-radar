@@ -6,6 +6,7 @@ import {
   getBudgetAlerts,
   getLatestSnapshotsMap,
   recordBudgetAlert,
+  upsertShadowFinding,
 } from '@/lib/db/queries';
 import { validatePublicApiRequest } from '@/lib/api-auth';
 import { hasAccess } from '@/lib/feature-flags';
@@ -152,6 +153,24 @@ export async function POST(request: NextRequest) {
         (m) => m.model_id === modelHint || m.name.toLowerCase() === modelHint.toLowerCase()
       );
       if (!explicit) {
+        // Unknown explicit model: record a Shadow-AI sighting (personal
+        // scope, idempotent upsert — repeat calls only refresh last_seen)
+        // before rejecting. Never fails the request itself.
+        if (auth.ownerEmail) {
+          try {
+            await upsertShadowFinding({
+              model_id: modelHint.slice(0, 500),
+              scope: 'personal',
+              owner_email: auth.ownerEmail,
+              estimated_monthly_usd: 0,
+              reason: 'Model requested via Radar Router but not tracked in the radar catalog.',
+            });
+          } catch (hookErr) {
+            logger.warn('Shadow-AI router hook failed:', {
+              error: hookErr instanceof Error ? hookErr.message : String(hookErr),
+            });
+          }
+        }
         return NextResponse.json(
           { error: `Model '${modelHint}' not found or not available` },
           { status: 404, headers: auth.rateLimitHeaders }

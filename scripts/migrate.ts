@@ -37,6 +37,7 @@ const EXPECTED_TABLES = [
     'migration_approvals',
     'processed_stripe_event_ids',
     'fk_orphans',
+    'shadow_ai_findings',
   ];
 
 async function ensureSchemaMigrationsTable(pool: any): Promise<void> {
