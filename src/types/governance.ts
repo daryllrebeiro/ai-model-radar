@@ -10,6 +10,7 @@ export interface BudgetRule {
   monthly_budget_usd: number;
   alert_threshold_pct: number; // 0..1 — alert / count as "approaching" at this fraction
   approval_required: boolean;
+  hard_cap: boolean; // when true + status 'over', the spend breaker trips (hard block)
   notify_email?: string | null;
   active: boolean;
   created_at?: string;

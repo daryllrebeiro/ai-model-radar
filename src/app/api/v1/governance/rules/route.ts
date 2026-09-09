@@ -90,6 +90,7 @@ export async function POST(request: NextRequest) {
       monthly_budget_usd: budget,
       alert_threshold_pct: Number(body?.alert_threshold_pct ?? 0.8),
       approval_required: Boolean(body?.approval_required),
+      hard_cap: body?.hard_cap === true,
       notify_email: notifyEmail,
     };
 

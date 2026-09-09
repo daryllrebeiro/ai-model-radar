@@ -56,6 +56,7 @@ function rule(overrides: Partial<BudgetRule> = {}): BudgetRule {
     monthly_budget_usd: 1000,
     alert_threshold_pct: 0.8,
     approval_required: false,
+    hard_cap: false,
     notify_email: null,
     active: true,
     ...overrides,

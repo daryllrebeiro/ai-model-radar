@@ -216,7 +216,8 @@ CREATE TABLE IF NOT EXISTS budget_rules (
     owner_user_id           INT REFERENCES users(id) ON DELETE SET NULL,  -- authoritative ownership
     monthly_budget_usd      NUMERIC(12, 2) NOT NULL CHECK (monthly_budget_usd > 0),
     alert_threshold_pct     NUMERIC(4, 3) NOT NULL DEFAULT 0.80,
-    approval_required       BOOLEAN NOT NULL DEFAULT FALSE,
+      approval_required       BOOLEAN NOT NULL DEFAULT FALSE,
+      hard_cap                BOOLEAN NOT NULL DEFAULT FALSE,
     notify_email            VARCHAR(255),
     active                  BOOLEAN NOT NULL DEFAULT TRUE,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),

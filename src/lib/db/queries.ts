@@ -1762,6 +1762,7 @@ export interface BudgetRuleInput {
   monthly_budget_usd: number;
   alert_threshold_pct?: number;
   approval_required?: boolean;
+  hard_cap?: boolean;
   notify_email?: string | null;
   active?: boolean;
 }
@@ -1777,6 +1778,7 @@ function mapBudgetRuleRows(rows: any[]): BudgetRule[] {
     monthly_budget_usd: Number(r.monthly_budget_usd),
     alert_threshold_pct: Number(r.alert_threshold_pct),
     approval_required: Boolean(r.approval_required),
+    hard_cap: Boolean(r.hard_cap ?? false),
     notify_email: r.notify_email || null,
     active: Boolean(r.active),
     created_at: r.created_at,
@@ -1803,8 +1805,8 @@ export async function createBudgetRule(input: BudgetRuleInput): Promise<BudgetRu
     const pool = getPgPool();
     const res = await pool.query(
       `INSERT INTO budget_rules
-        (name, scope, team_id, owner_email, owner_user_id, monthly_budget_usd, alert_threshold_pct, approval_required, notify_email, active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        (name, scope, team_id, owner_email, owner_user_id, monthly_budget_usd, alert_threshold_pct, approval_required, hard_cap, notify_email, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         input.name,
@@ -1815,6 +1817,7 @@ export async function createBudgetRule(input: BudgetRuleInput): Promise<BudgetRu
         Math.floor(input.monthly_budget_usd * 100) / 100,
         threshold,
         Boolean(input.approval_required),
+        Boolean(input.hard_cap),
         input.notify_email || null,
         input.active !== false,
       ]
@@ -1833,6 +1836,7 @@ export async function createBudgetRule(input: BudgetRuleInput): Promise<BudgetRu
       monthly_budget_usd: Math.floor(input.monthly_budget_usd * 100) / 100,
       alert_threshold_pct: threshold,
       approval_required: Boolean(input.approval_required),
+      hard_cap: Boolean(input.hard_cap),
       notify_email: input.notify_email || null,
       active: input.active !== false,
       created_at: new Date().toISOString(),

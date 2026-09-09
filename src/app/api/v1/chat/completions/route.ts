@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getModelCurrentList, getRecentEndpointTelemetry } from '@/lib/db/queries';
+import {
+  getModelCurrentList,
+  getRecentEndpointTelemetry,
+  getBudgetRulesForUser,
+  getBudgetAlerts,
+  getLatestSnapshotsMap,
+  recordBudgetAlert,
+} from '@/lib/db/queries';
 import { validatePublicApiRequest } from '@/lib/api-auth';
 import { hasAccess } from '@/lib/feature-flags';
 import { logger } from '@/lib/logger';
+import { resolveRuleUsage, evaluateBudgetRule } from '@/lib/governance';
+import { checkCircuitBreaker, msUntilMonthReset } from '@/lib/spend-breaker';
 import {
   getDefaultPolicy,
   selectBestModel,
@@ -33,13 +42,64 @@ export async function POST(request: NextRequest) {
       return auth.errorResponse;
     }
 
-    // Routing requires at least public API access; streaming responses
-    // additionally require the Enterprise realtime flag (checked below).
+    // Routing requires at least public API access.
     if (!hasAccess(auth.tier, 'PUBLIC_API_READ')) {
       return NextResponse.json(
         { error: 'Access denied. Requires an API tier with public API access.' },
         { status: 403, headers: auth.rateLimitHeaders }
       );
+    }
+
+    // Spend Circuit Breaker: block proxied calls when a hard-cap budget
+    // rule for the caller's scope is over 100% projected spend. Skipped
+    // entirely when the caller has no hard-cap rules (zero extra queries).
+    if (auth.ownerEmail) {
+      const rules = await getBudgetRulesForUser(auth.ownerEmail);
+      const hardCapRules = rules.filter((r) => r.active && r.hard_cap === true);
+      if (hardCapRules.length > 0) {
+        const snapshots = Array.from((await getLatestSnapshotsMap()).values());
+        const evaluations = [];
+        for (const rule of hardCapRules) {
+          const usage = await resolveRuleUsage(rule);
+          evaluations.push(evaluateBudgetRule(rule, usage, snapshots));
+        }
+        const breaker = checkCircuitBreaker(evaluations);
+        if (breaker.tripped) {
+          const ruleIds = hardCapRules
+            .map((r) => r.id)
+            .filter((id): id is number => typeof id === 'number');
+          const recent = ruleIds.length > 0
+            ? await getBudgetAlerts({ ruleIds, sinceHours: 24, limit: 50 })
+            : [];
+          for (const ev of breaker.trippedEvaluations) {
+            if (!ev.new_alert || ev.rule.id === undefined) continue;
+            const dup = recent.some(
+              (a) =>
+                a.rule_id === ev.rule.id &&
+                a.alert_type === 'over_budget' &&
+                a.model_family === ev.new_alert!.model_family
+            );
+            if (!dup) {
+              await recordBudgetAlert({ ...ev.new_alert, rule_id: ev.rule.id });
+            }
+          }
+          const retryAfterSec = Math.max(1, Math.ceil(msUntilMonthReset() / 1000));
+          return NextResponse.json(
+            {
+              error: 'Spend limit reached. Proxied calls are blocked until the monthly budget resets.',
+              tripped_rule_ids: breaker.trippedRuleIds,
+            },
+            {
+              status: 429,
+              headers: {
+                ...auth.rateLimitHeaders,
+                'Retry-After': String(retryAfterSec),
+                'X-Spend-Breaker': 'tripped',
+              },
+            }
+          );
+        }
+      }
     }
 
     const body = await request.json().catch(() => null);
