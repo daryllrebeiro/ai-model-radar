@@ -1,0 +1,9 @@
+# .replit — Replit native deployment for ai-model-radar (zero-cost autoscale)
+modules = ["nodejs-20"]
+
+run = "bash scripts/replit_start.sh"
+
+[deployment]
+deploymentTarget = "autoscale"
+build = ["bash", "scripts/replit_build.sh"]
+run = ["bash", "scripts/replit_start.sh"]
