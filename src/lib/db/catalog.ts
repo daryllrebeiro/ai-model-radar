@@ -2,14 +2,14 @@
  * Catalog reads: latest snapshots, model directory, detail, price history,
  * deals, and market stats. Split out of queries.ts (god-module remediation,
  * first cut) — same logic, new home. queries.ts re-exports everything, so
- * no caller changes. NOTE: imports getEvents from './queries' (used only
- * inside function bodies, so the queries<->catalog cycle is safe).
+ * no caller changes. NOTE: imports getEvents from './events' (used only
+ * inside function bodies; no import cycles remain after the split).
  */
 import { ModelSnapshot, ModelCurrent } from '@/types/models';
 import { ModelEvent, MarketStats, PriceDropDeal } from '@/types/events';
 import { isPostgres, getPgPool, getLocalState } from './client';
 import { extractProvider } from '../utils';
-import { getEvents } from './queries';
+import { getEvents } from './events';
 
 /**
  * Returns latest snapshot per model_id
@@ -223,10 +223,17 @@ export async function getModelDetail(modelId: string): Promise<{
 
   if (isPostgres()) {
     const pool = getPgPool();
-    const sRes = await pool.query(
-      `SELECT * FROM model_snapshots WHERE model_id = $1 ORDER BY polled_at ASC`,
-      [modelId]
-    );
+    // Independent queries: one round trip instead of two sequential ones.
+    const [sRes, eRes] = await Promise.all([
+      pool.query(
+        `SELECT * FROM model_snapshots WHERE model_id = $1 ORDER BY polled_at ASC`,
+        [modelId]
+      ),
+      pool.query(
+        `SELECT * FROM model_events WHERE model_id = $1 ORDER BY detected_at DESC`,
+        [modelId]
+      ),
+    ]);
     snapshots = sRes.rows.map((r: any) => ({
       id: Number(r.id),
       model_id: r.model_id,
@@ -241,10 +248,6 @@ export async function getModelDetail(modelId: string): Promise<{
       polled_at: r.polled_at,
     }));
 
-    const eRes = await pool.query(
-      `SELECT * FROM model_events WHERE model_id = $1 ORDER BY detected_at DESC`,
-      [modelId]
-    );
     events = eRes.rows.map((r: any) => ({
       id: Number(r.id),
       model_id: r.model_id,
@@ -324,7 +327,14 @@ export async function getModelPriceHistory(
     const sQuery = cutoffIso !== null
       ? `SELECT * FROM model_snapshots WHERE model_id = $1 AND polled_at >= $2 ORDER BY polled_at ASC`
       : `SELECT * FROM model_snapshots WHERE model_id = $1 ORDER BY polled_at ASC`;
-    const sRes = await pool.query(sQuery, cutoffIso !== null ? [modelId, cutoffIso] : [modelId]);
+    const eQuery = cutoffIso !== null
+      ? `SELECT * FROM model_events WHERE model_id = $1 AND detected_at >= $2 ORDER BY detected_at DESC`
+      : `SELECT * FROM model_events WHERE model_id = $1 ORDER BY detected_at DESC`;
+    // Independent queries: one round trip instead of two sequential ones.
+    const [sRes, eRes] = await Promise.all([
+      pool.query(sQuery, cutoffIso !== null ? [modelId, cutoffIso] : [modelId]),
+      pool.query(eQuery, cutoffIso !== null ? [modelId, cutoffIso] : [modelId]),
+    ]);
     snapshots = sRes.rows.map((r: any) => ({
       id: Number(r.id),
       model_id: r.model_id,
@@ -339,10 +349,6 @@ export async function getModelPriceHistory(
       polled_at: r.polled_at,
     }));
 
-    const eQuery = cutoffIso !== null
-      ? `SELECT * FROM model_events WHERE model_id = $1 AND detected_at >= $2 ORDER BY detected_at DESC`
-      : `SELECT * FROM model_events WHERE model_id = $1 ORDER BY detected_at DESC`;
-    const eRes = await pool.query(eQuery, cutoffIso !== null ? [modelId, cutoffIso] : [modelId]);
     events = eRes.rows.map((r: any) => ({
       id: Number(r.id),
       model_id: r.model_id,
@@ -461,7 +467,8 @@ export async function getDealsData(): Promise<{
 
   const snapshotMap = await getLatestSnapshotsMap();
   const currentList = Array.from(snapshotMap.values());
-  const freeModels = currentList.filter((m) => m.is_free);
+  // Bounded free-models slice matching the Postgres path (LIMIT 500)
+  const freeModels = currentList.filter((m) => m.is_free).slice(0, 500);
 
   const now = new Date().getTime();
   const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
