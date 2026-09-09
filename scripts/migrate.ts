@@ -41,6 +41,7 @@ const EXPECTED_TABLES = [
     'approval_votes',
     'webhook_dlq',
     'model_eol',
+    'eval_runs',
   ];
 
 async function ensureSchemaMigrationsTable(pool: any): Promise<void> {

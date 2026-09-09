@@ -89,6 +89,7 @@ interface LocalDbState {
   approval_votes: Array<any>;
   webhook_dlq: Array<any>;
   model_eol: Array<any>;
+  eval_runs: Array<any>;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
@@ -117,6 +118,7 @@ function emptyState(): LocalDbState {
     approval_votes: [],
     webhook_dlq: [],
     model_eol: [],
+    eval_runs: [],
   };
 }
 
@@ -152,6 +154,7 @@ function getLocalState(): LocalDbState {
       approval_votes: parsed.approval_votes || [],
       webhook_dlq: parsed.webhook_dlq || [],
       model_eol: parsed.model_eol || [],
+      eval_runs: parsed.eval_runs || [],
     };
   } catch {
     return emptyState();

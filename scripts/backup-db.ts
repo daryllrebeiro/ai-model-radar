@@ -50,6 +50,7 @@ export async function createDatabaseBackup(outputDir = path.join(process.cwd(), 
         'approval_votes',
         'webhook_dlq',
         'model_eol',
+        'eval_runs',
       // FK-independent tables (order irrelevant, kept stable for diffability)
       'model_snapshots',
       'model_events',
