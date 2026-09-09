@@ -872,6 +872,8 @@ export {
   normalizeAllUserTiers,
   isStripeEventProcessed,
   markStripeEventProcessed,
+  setUserSso,
+  setUserActive,
 } from './users';
 export type { UserRecord } from './users';
 

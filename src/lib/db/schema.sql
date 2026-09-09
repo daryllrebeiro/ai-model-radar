@@ -116,6 +116,9 @@ CREATE TABLE IF NOT EXISTS users (
     tier                VARCHAR(50) NOT NULL DEFAULT 'free',
     stripe_customer_id  VARCHAR(255),
     stripe_subscription_id VARCHAR(255),
+    sso_subject           TEXT,
+    sso_issuer            TEXT,
+    deprovisioned         BOOLEAN NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

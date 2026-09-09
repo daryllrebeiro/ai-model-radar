@@ -69,6 +69,9 @@ export interface UserRecord {
   tier: string;
   stripe_customer_id?: string;
   stripe_subscription_id?: string;
+  sso_subject?: string | null;
+  sso_issuer?: string | null;
+  deprovisioned?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -138,6 +141,70 @@ export async function getUserByEmail(email: string): Promise<UserRecord | null> 
     const found = (state.users || []).find((u: any) => u.email === normalizedEmail);
     return found || null;
   }
+}
+
+/**
+ * Links (or re-links) an SSO identity to a user. One IdP active at a time:
+ * re-linking overwrites the previous subject/issuer pair.
+ */
+export async function setUserSso(
+  email: string,
+  identity: { subject: string; issuer: string }
+): Promise<UserRecord | null> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const subject = identity.subject.slice(0, 500);
+  const issuer = identity.issuer.slice(0, 1000);
+  if (!normalizedEmail || !subject || !issuer) return null;
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `UPDATE users SET sso_subject = $1, sso_issuer = $2, updated_at = NOW()
+       WHERE email = $3 RETURNING *`,
+      [subject, issuer, normalizedEmail]
+    );
+    return res.rows[0] || null;
+  }
+  const state = getLocalState();
+  const user = (state.users || []).find((u: any) => u.email === normalizedEmail);
+  if (!user) return null;
+  user.sso_subject = subject;
+  user.sso_issuer = issuer;
+  user.updated_at = new Date().toISOString();
+  saveLocalState(state);
+  return user;
+}
+
+/**
+ * Activates or deactivates a user (SCIM lifecycle). Deactivation sets the
+ * auditable deprovisioned flag AND revokes all API keys — revocation is
+ * the actual enforcement (stale keys stop working immediately), the flag
+ * blocks future sign-ins. Returns the user plus revoked key count.
+ */
+export async function setUserActive(
+  email: string,
+  active: boolean
+): Promise<{ user: UserRecord | null; keysRevoked: number }> {
+  const normalizedEmail = email.trim().toLowerCase();
+  let keysRevoked = 0;
+  if (!active) {
+    keysRevoked = await revokeUserApiKeys(normalizedEmail);
+  }
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const res = await pool.query(
+      `UPDATE users SET deprovisioned = $1, updated_at = NOW()
+       WHERE email = $2 RETURNING *`,
+      [!active, normalizedEmail]
+    );
+    return { user: res.rows[0] || null, keysRevoked };
+  }
+  const state = getLocalState();
+  const user = (state.users || []).find((u: any) => u.email === normalizedEmail);
+  if (!user) return { user: null, keysRevoked };
+  user.deprovisioned = !active;
+  user.updated_at = new Date().toISOString();
+  saveLocalState(state);
+  return { user, keysRevoked };
 }
 
 /**

@@ -1,8 +1,13 @@
 import type { NextAuthOptions } from 'next-auth';
 import type { SessionStrategy } from 'next-auth';
 import EmailProvider from 'next-auth/providers/email';
-import { createOrGetUser, getUserByEmail } from './db/queries';
+import { createOrGetUser, getUserByEmail, setUserSso } from './db/queries';
+import { getSsoConfig, isSsoEmailAllowed, buildSsoProviderOptions } from './sso';
 import { logger, hashEmail } from './logger';
+
+const ssoProviderOptions = buildSsoProviderOptions(getSsoConfig());
+// OIDC SSO is additive: email magic links keep working when an IdP is set.
+const ssoProviders = ssoProviderOptions ? [ssoProviderOptions as any] : [];
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -50,6 +55,7 @@ export const authOptions: NextAuthOptions = {
         }
       },
     }),
+    ...ssoProviders,
   ],
   session: {
     strategy: 'jwt' as SessionStrategy,
@@ -66,13 +72,37 @@ export const authOptions: NextAuthOptions = {
     verifyRequest: '/auth/verify-request',
   },
   callbacks: {
-    async signIn({ user, account }) {
+    async signIn({ user, account, profile }) {
       if (account?.provider === 'email' && user.email) {
         try {
           const dbUser = await createOrGetUser({ email: user.email });
+          if (dbUser.deprovisioned) return false;
           (user as any).id = String(dbUser.id);
         } catch (err: any) {
           logger.error(`Auth signIn callback failed for ${hashEmail(user.email)}: ${err.message}`);
+          return false;
+        }
+      }
+      // OIDC SSO: JIT-provision, enforce the domain allowlist, link the
+      // upstream subject, and refuse deprovisioned accounts.
+      if (account?.provider === 'sso' && user.email) {
+        try {
+          const sso = getSsoConfig();
+          if (!sso.enabled) return false;
+          if (!isSsoEmailAllowed(user.email, sso.allowedDomains)) {
+            logger.warn(`SSO sign-in refused for non-allowlisted domain: ${hashEmail(user.email)}`);
+            return false;
+          }
+          const dbUser = await createOrGetUser({ email: user.email });
+          if (dbUser.deprovisioned) return false;
+          const subject =
+            (profile as any)?.sub || (user as any)?.id || account.providerAccountId || '';
+          if (subject) {
+            await setUserSso(user.email, { subject: String(subject), issuer: sso.issuer });
+          }
+          (user as any).id = String(dbUser.id);
+        } catch (err: any) {
+          logger.error(`SSO signIn callback failed for ${hashEmail(user.email || '?')}: ${err.message}`);
           return false;
         }
       }
