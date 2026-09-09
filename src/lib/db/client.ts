@@ -87,6 +87,7 @@ interface LocalDbState {
   fk_orphans: Array<any>;
   shadow_ai_findings: Array<any>;
   approval_votes: Array<any>;
+  webhook_dlq: Array<any>;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
@@ -113,6 +114,7 @@ function emptyState(): LocalDbState {
     fk_orphans: [],
     shadow_ai_findings: [],
     approval_votes: [],
+    webhook_dlq: [],
   };
 }
 
@@ -146,6 +148,7 @@ function getLocalState(): LocalDbState {
       fk_orphans: parsed.fk_orphans || [],
       shadow_ai_findings: parsed.shadow_ai_findings || [],
       approval_votes: parsed.approval_votes || [],
+      webhook_dlq: parsed.webhook_dlq || [],
     };
   } catch {
     return emptyState();

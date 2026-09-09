@@ -79,6 +79,22 @@ CREATE TABLE IF NOT EXISTS digest_deliveries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deliveries_time ON digest_deliveries (delivered_at DESC);
+  CREATE TABLE IF NOT EXISTS webhook_dlq (
+      id              BIGSERIAL PRIMARY KEY,
+      delivery_id     TEXT NOT NULL UNIQUE,
+      rule_id         TEXT,
+      destination_url TEXT NOT NULL,
+      payload         TEXT NOT NULL,
+      attempts        INT NOT NULL DEFAULT 0,
+      max_attempts    INT NOT NULL DEFAULT 5 CHECK (max_attempts >= 1),
+      next_retry_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      status          VARCHAR(20) NOT NULL DEFAULT 'queued',
+      last_error      TEXT,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_webhook_dlq_due
+    ON webhook_dlq (status, next_retry_at) WHERE status IN ('queued', 'retrying');
 
 -- 6. User Accounts, Stripe Subscriptions & Server-Side Watchlists
 CREATE TABLE IF NOT EXISTS users (

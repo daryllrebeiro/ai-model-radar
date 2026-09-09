@@ -39,6 +39,7 @@ const EXPECTED_TABLES = [
     'fk_orphans',
     'shadow_ai_findings',
     'approval_votes',
+    'webhook_dlq',
   ];
 
 async function ensureSchemaMigrationsTable(pool: any): Promise<void> {
