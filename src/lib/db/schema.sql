@@ -93,8 +93,20 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_time ON digest_deliveries (delivered_a
       created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
-  CREATE INDEX IF NOT EXISTS idx_webhook_dlq_due
-    ON webhook_dlq (status, next_retry_at) WHERE status IN ('queued', 'retrying');
+CREATE INDEX IF NOT EXISTS idx_webhook_dlq_due
+  ON webhook_dlq (status, next_retry_at) WHERE status IN ('queued', 'retrying');
+CREATE TABLE IF NOT EXISTS model_eol (
+    model_id         TEXT PRIMARY KEY,
+    announced_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    eol_at           TIMESTAMPTZ NOT NULL,
+    source           TEXT NOT NULL DEFAULT '',
+    notes            TEXT NOT NULL DEFAULT '',
+    created_by_email VARCHAR(255) NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (eol_at > announced_at)
+);
+CREATE INDEX IF NOT EXISTS idx_model_eol_date ON model_eol (eol_at);
 
 -- 6. User Accounts, Stripe Subscriptions & Server-Side Watchlists
 CREATE TABLE IF NOT EXISTS users (

@@ -23,6 +23,7 @@ const RESTORE_ORDER = [
     'migration_approvals',
     'approval_votes',
     'webhook_dlq',
+    'model_eol',
     'model_snapshots',
     'model_events',
     'ingestion_runs',
