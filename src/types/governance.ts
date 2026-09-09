@@ -88,6 +88,18 @@ export interface MigrationApproval {
   requested_by: string;
   reviewed_by?: string | null;
   decision_at?: string | null;
+  quorum_required: number; // M-of-N ballots needed to leave 'pending' (1 = legacy single decider)
+  created_at?: string;
+}
+
+export type ApprovalVoteDecision = 'approved' | 'rejected';
+
+export interface ApprovalVote {
+  id?: number;
+  approval_id: number;
+  voter_email: string;
+  voter_user_id?: number | null;
+  decision: ApprovalVoteDecision;
   created_at?: string;
 }
 

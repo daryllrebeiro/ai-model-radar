@@ -86,6 +86,7 @@ interface LocalDbState {
   processed_stripe_event_ids: Array<any>;
   fk_orphans: Array<any>;
   shadow_ai_findings: Array<any>;
+  approval_votes: Array<any>;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
@@ -111,6 +112,7 @@ function emptyState(): LocalDbState {
     processed_stripe_event_ids: [],
     fk_orphans: [],
     shadow_ai_findings: [],
+    approval_votes: [],
   };
 }
 
@@ -143,6 +145,7 @@ function getLocalState(): LocalDbState {
       processed_stripe_event_ids: parsed.processed_stripe_event_ids || [],
       fk_orphans: parsed.fk_orphans || [],
       shadow_ai_findings: parsed.shadow_ai_findings || [],
+      approval_votes: parsed.approval_votes || [],
     };
   } catch {
     return emptyState();

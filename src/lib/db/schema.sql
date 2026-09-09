@@ -279,6 +279,7 @@ CREATE TABLE IF NOT EXISTS migration_approvals (
     requested_by            VARCHAR(255) NOT NULL,
     reviewed_by             VARCHAR(255),
     decision_at             TIMESTAMPTZ,
+    quorum_required         INT NOT NULL DEFAULT 1 CHECK (quorum_required >= 1),
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -287,6 +288,17 @@ CREATE INDEX IF NOT EXISTS idx_migration_approvals_team ON migration_approvals (
 -- One pending request per (rule, from, to): blocks duplicate-pending spam.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_migration_approvals_pending_dedup
   ON migration_approvals (rule_id, from_model_id, to_model_id) WHERE status = 'pending';
+CREATE TABLE IF NOT EXISTS approval_votes (
+    id            BIGSERIAL PRIMARY KEY,
+    approval_id   BIGINT NOT NULL REFERENCES migration_approvals(id) ON DELETE CASCADE,
+    voter_email   VARCHAR(255) NOT NULL,
+    voter_user_id INT REFERENCES users(id) ON DELETE SET NULL,
+    decision      VARCHAR(20) NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (approval_id, voter_email)
+);
+CREATE INDEX IF NOT EXISTS idx_approval_votes_approval
+  ON approval_votes (approval_id);
 
 -- 15. Processed Stripe webhook event ids (idempotency) — one row per
 -- delivered event.id; the PK rejects re-deliveries (Stripe retries).

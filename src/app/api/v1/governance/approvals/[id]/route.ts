@@ -6,6 +6,8 @@ import {
   getBudgetRulesForUser,
   getMigrationApprovals,
   decideMigrationApproval,
+  castApprovalVote,
+  getApprovalVotes,
   getTeamRole,
 } from '@/lib/db/queries';
 
@@ -65,6 +67,41 @@ export async function POST(
         { error: 'Only the rule owner or a team admin can decide approvals' },
         { status: 403 }
       );
+    }
+
+    // Quorum path: multi-approver requests collect one ballot per voter.
+    // The requester cannot vote on their own request (separation of duties).
+    if (Number(approval.quorum_required ?? 1) > 1) {
+      if (approval.requested_by.toLowerCase() === session.user.email.toLowerCase()) {
+        return NextResponse.json(
+          { error: 'The requester cannot vote on their own approval request' },
+          { status: 403 }
+        );
+      }
+      const { outcome, vote, approval: current } = await castApprovalVote(
+        approvalId,
+        session.user.email,
+        decision
+      );
+      if (outcome === 'duplicate') {
+        return NextResponse.json(
+          { error: 'You have already voted on this approval request', approvalId },
+          { status: 409 }
+        );
+      }
+      if (outcome === 'closed' || outcome === 'not-found' || !current) {
+        return NextResponse.json(
+          { error: 'Approval already decided', approvalId },
+          { status: 409 }
+        );
+      }
+      const votes = await getApprovalVotes(approvalId);
+      return NextResponse.json({
+        approval: current,
+        vote,
+        votes,
+        quorum_required: current.quorum_required,
+      });
     }
 
     const updated = await decideMigrationApproval(approvalId, decision, session.user.email);

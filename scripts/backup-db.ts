@@ -47,6 +47,7 @@ export async function createDatabaseBackup(outputDir = path.join(process.cwd(), 
       'budget_alerts',
       'shadow_ai_findings',
       'migration_approvals',
+      'approval_votes',
       // FK-independent tables (order irrelevant, kept stable for diffability)
       'model_snapshots',
       'model_events',
