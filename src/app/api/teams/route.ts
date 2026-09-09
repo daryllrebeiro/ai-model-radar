@@ -3,6 +3,7 @@ import { requireFeature } from '@/lib/access-guard';
 import { checkSessionRateLimit } from '@/lib/api-auth';
 import { getTeamsForUser, createTeam, getTeamDetail } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
+import { teamCreateSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,15 +35,18 @@ export async function POST(request: NextRequest) {
     if (limited) return limited;
 
     const body = await request.json().catch(() => null);
-    const name = body?.name;
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      return NextResponse.json({ error: 'Team name is required' }, { status: 400 });
-    }
-    if (name.trim().length > 120) {
-      return NextResponse.json({ error: 'Team name must be 120 characters or fewer' }, { status: 400 });
+    const parsed = teamCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'Team name is required',
+          details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        { status: 400 }
+      );
     }
 
-    const team = await createTeam(name.trim(), session.user.email);
+    const team = await createTeam(parsed.data.name, session.user.email);
     const detail = await getTeamDetail(team.id);
     return NextResponse.json({ team: detail }, { status: 201 });
   } catch (err: any) {

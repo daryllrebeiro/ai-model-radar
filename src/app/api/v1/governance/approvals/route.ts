@@ -4,6 +4,7 @@ import { checkSessionRateLimit } from '@/lib/api-auth';
 import { handleApiError } from '@/lib/api-error-handler';
 import { getBudgetRulesForUser, createMigrationApproval, getTeamRole } from '@/lib/db/queries';
 import { validateQuorum } from '@/lib/quorum';
+import { approvalCreateSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,17 +22,20 @@ export async function POST(request: NextRequest) {
 
     const email = session.user.email;
     const body = await request.json().catch(() => null);
-    const ruleId = Number(body?.rule_id);
-
-    if (!Number.isInteger(ruleId) || ruleId <= 0) {
-      return NextResponse.json({ error: 'A valid rule_id is required' }, { status: 400 });
+    const parsed = approvalCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'from_model_id and to_model_id are required',
+          details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        { status: 400 }
+      );
     }
-    const fromModel = typeof body?.from_model_id === 'string' ? body.from_model_id.trim() : '';
-    const toModel = typeof body?.to_model_id === 'string' ? body.to_model_id.trim() : '';
-    if (!fromModel || !toModel) {
-      return NextResponse.json({ error: 'from_model_id and to_model_id are required' }, { status: 400 });
-    }
-    const savings = Number(body?.monthly_savings_usd || 0);
+    const ruleId = parsed.data.rule_id;
+    const fromModel = parsed.data.from_model_id;
+    const toModel = parsed.data.to_model_id;
+    const savings = parsed.data.monthly_savings_usd ?? 0;
 
     const accessible = await getBudgetRulesForUser(email);
     const rule = accessible.find((r) => r.id === ruleId);
@@ -44,9 +48,9 @@ export async function POST(request: NextRequest) {
     // the bar above 1.
     let quorumForRule = 1;
     if (rule.scope === 'team') {
-      const rawQuorum = body?.quorum_required;
+      const rawQuorum = parsed.data.quorum_required;
       if (rawQuorum !== undefined && rawQuorum !== null) {
-        const q = Number(rawQuorum);
+        const q = rawQuorum;
         if (!validateQuorum(q)) {
           return NextResponse.json(
             { error: 'quorum_required must be an integer between 1 and 10' },

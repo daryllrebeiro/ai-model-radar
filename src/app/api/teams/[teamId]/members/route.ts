@@ -3,6 +3,7 @@ import { requireFeature } from '@/lib/access-guard';
 import { checkSessionRateLimit } from '@/lib/api-auth';
 import { getTeam, getTeamRole, addTeamMember, removeTeamMember, getTeamMembers } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
+import { teamMemberAddSchema, teamMemberRemoveSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,8 +12,6 @@ function parseTeamId(raw: string | string[]): number | null {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
 }
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * POST /api/teams/:teamId/members — add member by email (admin only).
@@ -40,12 +39,24 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => null);
-    const email = body?.email;
-    if (!email || typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
+    const parsed = teamMemberAddSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'A valid member email is required',
+          details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        { status: 400 }
+      );
+    }
+    // Membership is keyed by email: a bare userId cannot be resolved to an
+    // address here, so it is rejected with the same 400 as a missing email.
+    const email = parsed.data.email;
+    if (!email) {
       return NextResponse.json({ error: 'A valid member email is required' }, { status: 400 });
     }
 
-    const memberRole = body?.role === 'member' ? 'member' : body?.role === 'admin' ? 'admin' : 'member';
+    const memberRole = parsed.data.role ?? 'member';
     if (memberRole === 'admin') {
       // Granting admin is ownership transfer-grade: team owner only. Any-admin
       // approval would let one compromised admin mint infinite admins.
@@ -88,10 +99,12 @@ export async function DELETE(
       return NextResponse.json({ error: 'Team not found' }, { status: 404 });
     }
 
-    const email = request.nextUrl.searchParams.get('email');
-    if (!email || !EMAIL_RE.test(email.trim())) {
+    const rawEmail = request.nextUrl.searchParams.get('email');
+    const parsedQuery = teamMemberRemoveSchema.safeParse({ email: rawEmail });
+    if (!parsedQuery.success || !parsedQuery.data.email) {
       return NextResponse.json({ error: 'A valid member email is required' }, { status: 400 });
     }
+    const email = parsedQuery.data.email;
 
     if (email.trim().toLowerCase() === team.owner_email.toLowerCase()) {
       return NextResponse.json({ error: 'The team owner cannot be removed' }, { status: 400 });

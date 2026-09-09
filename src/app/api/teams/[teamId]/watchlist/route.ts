@@ -8,6 +8,7 @@ import {
   removeFromTeamWatchlist,
 } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
+import { teamWatchlistAddSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,14 +73,21 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => null);
-    const modelId = body?.modelId;
-    if (!modelId || typeof modelId !== 'string' || modelId.trim().length === 0) {
-      return NextResponse.json({ error: 'modelId is required' }, { status: 400 });
+    const parsed = teamWatchlistAddSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'modelId is required',
+          details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        { status: 400 }
+      );
     }
+    const modelId = parsed.data.modelId;
 
-    await addToTeamWatchlist(teamId, modelId.trim(), session.user.email);
+    await addToTeamWatchlist(teamId, modelId, session.user.email);
     const watchlist = await getTeamWatchlist(teamId);
-    return NextResponse.json({ success: true, modelId: modelId.trim(), watchlist });
+    return NextResponse.json({ success: true, modelId, watchlist });
   } catch (err: any) {
     return handleApiError(err, 'teams/:id/watchlist POST');
   }

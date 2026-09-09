@@ -7,6 +7,7 @@ import {
   removeFromWatchlist,
 } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
+import { watchlistMutationSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,12 +43,18 @@ export async function POST(request: NextRequest) {
     const limited = await checkSessionRateLimit(session.user.id, 'watchlists');
     if (limited) return limited;
 
-    const body = await request.json();
-    const { modelId, action } = body;
-
-    if (!modelId) {
-      return NextResponse.json({ error: 'modelId is required' }, { status: 400 });
+    const body = await request.json().catch(() => null);
+    const parsed = watchlistMutationSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'modelId is required',
+          details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        { status: 400 }
+      );
     }
+    const { modelId, action } = parsed.data;
 
     const user = session.user;
 

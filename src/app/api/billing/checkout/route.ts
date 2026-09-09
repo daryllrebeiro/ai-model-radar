@@ -5,6 +5,7 @@ import { checkSessionRateLimit } from '@/lib/api-auth';
 import { isBillingEnabled } from '@/lib/feature-flags';
 import { safeRedirectUrl } from '@/lib/env';
 import { handleApiError } from '@/lib/api-error-handler';
+import { checkoutSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,9 +23,17 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { tier, successUrl, cancelUrl } = body;
+    const parsed = checkoutSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Invalid checkout payload', issues: parsed.error.issues },
+        { status: 400 }
+      );
+    }
 
-    if (!tier || !BILLING_PLANS[tier] || tier === 'free') {
+    const { tier, successUrl, cancelUrl } = parsed.data;
+
+    if (!BILLING_PLANS[tier]) {
       return NextResponse.json(
         { error: 'Valid tier (developer or production) is required.' },
         { status: 400 }

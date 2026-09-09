@@ -9,6 +9,7 @@ import {
   deleteTeam,
 } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
+import { teamRenameSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,12 +77,18 @@ export async function PATCH(
     }
 
     const body = await request.json().catch(() => null);
-    const name = body?.name;
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      return NextResponse.json({ error: 'Team name is required' }, { status: 400 });
+    const parsed = teamRenameSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'Team name is required',
+          details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        { status: 400 }
+      );
     }
 
-    const updated = await renameTeam(teamId, name.trim());
+    const updated = await renameTeam(teamId, parsed.data.name);
     if (!updated) {
       return NextResponse.json({ error: 'Team not found' }, { status: 404 });
     }

@@ -4,6 +4,7 @@ import { buildRecommendations, UsageProfileInput } from '@/lib/recommendation';
 import { detectMarketSignals } from '@/lib/signals';
 import { validatePublicApiRequest, apiJsonResponse, assertPayloadSize } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
+import { recommendSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,11 +54,22 @@ export async function POST(request: NextRequest) {
       const tooLarge = assertPayloadSize(request, 64 * 1024);
       if (tooLarge) return tooLarge;
       body = await request.json();
-  } catch {
-    return apiJsonResponse({ error: 'invalid JSON body' }, auth.rateLimitHeaders, 400);
-  }
+    } catch {
+      return apiJsonResponse({ error: 'invalid JSON body' }, auth.rateLimitHeaders, 400);
+    }
 
-  const inline = body?.profile;
+    if (body !== null && typeof body === 'object') {
+      const parsed = recommendSchema.safeParse(body);
+      if (!parsed.success) {
+        return apiJsonResponse(
+          { error: 'invalid recommendation payload', issues: parsed.error.issues },
+          auth.rateLimitHeaders,
+          400
+        );
+      }
+    }
+
+    const inline = body?.profile;
   let profile: UsageProfile | null = null;
 
   if (inline) {

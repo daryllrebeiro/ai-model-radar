@@ -2,15 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { deliverWebhookPayload } from '@/lib/webhooks';
 import { requireFeature } from '@/lib/access-guard';
 import { checkSessionRateLimit } from '@/lib/api-auth';
-import { z } from 'zod';
+import { testWebhookSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
-
-const testWebhookSchema = z.object({
-  destinationUrl: z.string().url(),
-  secret: z.string().optional(),
-  event: z.record(z.any()).optional(),
-});
 
 export async function POST(request: NextRequest) {
   try {

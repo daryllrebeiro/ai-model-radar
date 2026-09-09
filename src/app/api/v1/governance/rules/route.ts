@@ -9,11 +9,9 @@ import {
   getTeamRole,
   BudgetRuleInput,
 } from '@/lib/db/queries';
-import { BudgetRuleScope } from '@/types/governance';
+import { governanceRuleCreateSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * GET /api/v1/governance/rules — list caller-visible budget rules.
@@ -45,13 +43,22 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null);
     const email = (session.user.email || '').trim();
 
-    const scope: BudgetRuleScope = body?.scope === 'team' ? 'team' : 'personal';
+    const parsed = governanceRuleCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'Invalid budget rule',
+          details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        { status: 400 }
+      );
+    }
+    const data = parsed.data;
+
+    const scope = data.scope;
     let teamId: number | null = null;
-    if (body?.team_id !== undefined && body?.team_id !== null) {
-      teamId = Number(body.team_id);
-      if (!Number.isInteger(teamId) || teamId <= 0) {
-        return NextResponse.json({ error: 'Invalid team_id' }, { status: 400 });
-      }
+    if (data.team_id !== undefined && data.team_id !== null) {
+      teamId = data.team_id;
       const teams = await getTeamsForUser(email);
       const isMember = teams.some((t) => t.id === teamId);
       if (!isMember) {
@@ -63,24 +70,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const budget = Number(body?.monthly_budget_usd);
-    if (!Number.isFinite(budget) || budget <= 0) {
-      return NextResponse.json({ error: 'monthly_budget_usd must be a positive number' }, { status: 400 });
-    }
-
-    const name = typeof body?.name === 'string' && body.name.trim() ? body.name.trim() : 'Unnamed budget';
-    if (name.length > 160) {
-      return NextResponse.json({ error: 'Rule name must be 160 characters or fewer' }, { status: 400 });
-    }
-
-    const notifyEmailRaw = body?.notify_email;
-    let notifyEmail: string | null = null;
-    if (notifyEmailRaw !== undefined && notifyEmailRaw !== null && String(notifyEmailRaw).trim() !== '') {
-      if (!EMAIL_RE.test(String(notifyEmailRaw).trim())) {
-        return NextResponse.json({ error: 'notify_email is not a valid email address' }, { status: 400 });
-      }
-      notifyEmail = String(notifyEmailRaw).trim();
-    }
+    const budget = data.monthly_budget_usd;
+    const name = data.name && data.name.length > 0 ? data.name : 'Unnamed budget';
 
     const input: BudgetRuleInput = {
       name,
@@ -88,10 +79,10 @@ export async function POST(request: NextRequest) {
       team_id: teamId,
       owner_email: email,
       monthly_budget_usd: budget,
-      alert_threshold_pct: Number(body?.alert_threshold_pct ?? 0.8),
-      approval_required: Boolean(body?.approval_required),
-      hard_cap: body?.hard_cap === true,
-      notify_email: notifyEmail,
+      alert_threshold_pct: data.alert_threshold_pct ?? 0.8,
+      approval_required: data.approval_required ?? false,
+      hard_cap: data.hard_cap === true,
+      notify_email: data.notify_email ?? null,
     };
 
     const rule = await createBudgetRule(input);

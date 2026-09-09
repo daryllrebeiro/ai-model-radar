@@ -4,6 +4,7 @@ import { checkSessionRateLimit } from '@/lib/api-auth';
 import { safeRedirectUrl } from '@/lib/env';
 import { getUserByEmail } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
+import { portalSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,15 @@ export async function POST(request: NextRequest) {
 
     const email = session.user.email;
     const body = await request.json().catch(() => ({}));
+
+    const parsed = portalSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Invalid portal payload', issues: parsed.error.issues },
+        { status: 400 }
+      );
+    }
+
     const user = await getUserByEmail(email);
     const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
     const returnUrl = safeRedirectUrl(

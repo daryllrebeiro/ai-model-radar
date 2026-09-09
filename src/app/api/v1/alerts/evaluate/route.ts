@@ -5,6 +5,7 @@ import { requireFeature } from '@/lib/access-guard';
 import { evaluateAdvancedAlertRules, DEFAULT_ALERT_CONFIG } from '@/lib/alerts';
 import { AlertRuleConfig } from '@/types/alerts';
 import { handleApiError } from '@/lib/api-error-handler';
+import { alertsEvaluateSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +37,17 @@ export async function POST(request: NextRequest) {
     const tooLarge = assertPayloadSize(request, 64 * 1024);
     if (tooLarge) return tooLarge;
     const body = (await request.json().catch(() => null)) || {};
-    const config: AlertRuleConfig = { ...DEFAULT_ALERT_CONFIG, ...body.config };
+
+    const parsed = alertsEvaluateSchema.safeParse(body);
+    if (!parsed.success) {
+      return apiJsonResponse(
+        { error: 'Invalid alert evaluation payload', issues: parsed.error.issues },
+        auth.rateLimitHeaders,
+        400
+      );
+    }
+
+    const config: AlertRuleConfig = { ...DEFAULT_ALERT_CONFIG, ...parsed.data.config };
 
     for (const field of NUMERIC_FIELDS) {
       if (config[field] !== undefined && typeof config[field] !== 'number') {
@@ -47,11 +58,11 @@ export async function POST(request: NextRequest) {
       config.minPriceDropPct = DEFAULT_ALERT_CONFIG.minPriceDropPct;
     }
 
-    const rawLimit = Number(body.limit || 100);
+    const rawLimit = Number(parsed.data.limit || 100);
     const limit = Number.isFinite(rawLimit) ? Math.min(500, Math.max(1, Math.floor(rawLimit))) : 100;
 
     const { events } = await getEvents({ limit });
-    const watched = new Set<string>((body.watchedModelIds as string[]) || []);
+    const watched = new Set<string>(parsed.data.watchedModelIds || []);
     const result = evaluateAdvancedAlertRules(events, config, watched);
 
     return apiJsonResponse(

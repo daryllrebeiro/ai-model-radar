@@ -5,6 +5,7 @@ import { detectMarketSignals } from '@/lib/signals';
 import { validatePublicApiRequest, apiJsonResponse, assertPayloadSize } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
 import { answerQuestion, AskContext, validateAnswer } from '@/lib/ask-answer';
+import { askSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,14 +40,16 @@ export async function POST(request: NextRequest) {
     return apiJsonResponse({ error: 'Invalid JSON body' }, auth.rateLimitHeaders, 400);
   }
 
-  const question = typeof body.question === 'string' ? body.question.trim() : '';
-  if (question.length < 3 || question.length > 2000) {
+  const parsed = askSchema.safeParse(body);
+  if (!parsed.success) {
     return apiJsonResponse(
-      { error: 'question must be between 3 and 2000 characters' },
+      { error: 'question must be between 3 and 2000 characters', issues: parsed.error.issues },
       auth.rateLimitHeaders,
       400
     );
   }
+
+  const question = parsed.data.question;
 
   const [snapshotsMap, eventsRes, telemetryRes] = await Promise.all([
     getLatestSnapshotsMap(),

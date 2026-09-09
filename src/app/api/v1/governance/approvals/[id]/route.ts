@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireFeature } from '@/lib/access-guard';
 import { checkSessionRateLimit } from '@/lib/api-auth';
 import { handleApiError } from '@/lib/api-error-handler';
+import { approvalDecideSchema } from '@/lib/validation/api-schemas';
 import {
   getBudgetRulesForUser,
   getMigrationApprovals,
@@ -35,10 +36,17 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => null);
-    const decision = body?.decision;
-    if (decision !== 'approved' && decision !== 'rejected') {
-      return NextResponse.json({ error: 'decision must be "approved" or "rejected"' }, { status: 400 });
+    const parsed = approvalDecideSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'decision must be "approved" or "rejected"',
+          details: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        { status: 400 }
+      );
     }
+    const decision = parsed.data.decision;
 
     const rules = await getBudgetRulesForUser(session.user.email);
     const approvals = await getMigrationApprovals({ limit: 200 });
