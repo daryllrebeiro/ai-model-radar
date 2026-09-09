@@ -1,7 +1,7 @@
 import React from 'react';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth.config';
-import { getDealsData, getUsageProfileByEmail, getLatestSnapshotsMap } from '@/lib/db/queries';
+import { getDealsData, getUsageProfileByEmail, getModelCurrentList } from '@/lib/db/queries';
 import { FreeModelsGrid } from '@/components/deals/free-models-grid';
 import { PriceDropsTable } from '@/components/deals/price-drops-table';
 import { maxMonthlySavingsForProfile } from '@/lib/recommendation';
@@ -28,7 +28,7 @@ export default async function DealsPage() {
       if (session?.user?.email) {
         const profile = await getUsageProfileByEmail(session.user.email);
         if (profile) {
-          const snapshotsMap = await getLatestSnapshotsMap();
+          const { models: currentModels } = await getModelCurrentList({ limit: 500 });
           const { best } = maxMonthlySavingsForProfile(
             {
               primary_model_id: profile.primary_model_id,
@@ -37,7 +37,7 @@ export default async function DealsPage() {
               cache_hit_ratio: profile.cache_hit_ratio,
               batch_discount: profile.batch_discount,
             },
-            Array.from(snapshotsMap.values())
+            currentModels
           );
           if (best && best.monthly_savings_usd > 0) {
             savingsBanner = {
