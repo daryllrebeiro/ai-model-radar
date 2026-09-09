@@ -163,7 +163,14 @@ export default function ApiDocsPage() {
             <span className="text-xs font-mono font-bold uppercase">CORS Policy</span>
           </div>
           <p className="text-xs text-gray-400">
-            Permissive <code className="text-gray-200">Access-Control-Allow-Origin: *</code> for seamless browser integrations.
+            <code className="text-gray-200">Access-Control-Allow-Origin</code> echoes a
+            configured <code className="text-gray-200">ALLOWED_ORIGINS</code> entry (with{' '}
+            <code className="text-gray-200">Vary: Origin</code>) when the request{' '}
+            <code className="text-gray-200">Origin</code> matches; otherwise it falls back to{' '}
+            <code className="text-gray-200">*</code> for the public, unauthenticated catalog
+            surface. Credentials are never accepted cross-origin (no{' '}
+            <code className="text-gray-200">Allow-Credentials</code>), so{' '}
+            <code className="text-gray-200">*</code> cannot exfiltrate sessions.
           </p>
         </div>
       </div>

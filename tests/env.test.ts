@@ -60,6 +60,7 @@ describe('Phase P4: Environment Schema Validation', () => {
       FEATURE_ENFORCEMENT: 'true',
       UNSUBSCRIBE_SECRET: 'unsubscribe-secret-32-char-min',
       CRON_SECRET: 'super-secure-cron-secret-123',
+      ADMIN_SECRET: 'super-admin-secret-16-minimum',
       OPENROUTER_API_URL: 'https://openrouter.ai/api/v1/models',
     });
 

@@ -126,6 +126,11 @@ export function validateEnv(processEnv: Record<string, any> = process.env): {
         'UNSUBSCRIBE_SECRET is required in production (>= 16 chars). Without it unsubscribe tokens use an insecure default.'
       );
     }
+    if (!processEnv.ADMIN_SECRET || String(processEnv.ADMIN_SECRET).length < 16) {
+      errors.push(
+        'ADMIN_SECRET is required in production (>= 16 chars). Without it /api/admin/health is permanently 401.'
+      );
+    }
   }
 
   // Conditional validation when Stripe billing is enabled

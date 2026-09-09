@@ -135,12 +135,13 @@ operational guardrails itemized below.
   `pool.end()` handling, no transaction pooler. Under Vercel serverless, a process-global
   pool per warm instance can still exhaust a small Postgres `max_connections` during burst
   cold-starts — acceptable today, revisit with PgBouncer/Supabase pooler at scale.
-- **Migration hygiene: much improved, two gaps left.** Nine incremental files (`005`–`013`)
+- **Migration hygiene: much improved, one gap left.** Nine incremental files (`005`–`013`)
   tracked by filename **plus SHA-256 checksums** with drift detection, each applied inside
-  its own transaction, `EXPECTED_TABLES` current at 17, and a `db:migrate:status` command
-  that exits nonzero when pending/drifted. Still missing: `001-004` (folded into baseline,
-  now documented in `migrate.ts`), down migrations, and `schema.sql` still claims
-  "PostgreSQL & SQLite compatible" while using `BIGSERIAL`/`JSONB`/`TIMESTAMPTZ`.
+  its own transaction, `EXPECTED_TABLES` current at 23, and a `db:migrate:status` command
+  that exits nonzero when pending/drifted. Still missing: down migrations. The `001-004`
+  baseline fold-in is documented in `scripts/migrate.ts:10-19`; `schema.sql:1-2` now
+  correctly states "PostgreSQL only — uses BIGSERIAL, JSONB, TIMESTAMPTZ, DISTINCT ON,
+  none of which SQLite supports."
 
 ### Error Handling & Fault Tolerance
 - **Handler is typed and safe.** `toAppError` (`src/lib/errors.ts:118-140`) maps unknown
@@ -202,13 +203,12 @@ operational guardrails itemized below.
 | Priority | Category | Component / Module | Issue / Technical Debt | Impact If Ignored | Recommended Fix |
 |---|---|---|---|---|---|
 | P0 | Modularity | `queries.ts` god module (3,022 lines) | 17 tables × 2 backends in one file; every data change risks unrelated domains; growth accelerating (+371 lines last round) | Velocity decay; merge conflicts; a single bad edit can take down all domains | Split per domain (`db/users.ts`, `db/teams.ts`, `db/governance.ts`, `db/catalog.ts`, `db/events.ts`…) behind a repository interface; one domain per PR; keep function signatures stable so routes don't churn |
-| P0 | Performance | Residual hydration (`getLatestSnapshotsMap`, deals free-list, restore replay) | Full `DISTINCT ON` scan still backs health/arbitrage/probes/pages; free-models unbounded; restore is row-by-row | Next user-visible degradation and slowest operational path as data grows | Push remaining filters down (or a `model_current` materialization); `LIMIT` on free-models; chunked multi-row restore replay reusing `bulkInsert` |
-| P1 | Reliability | Migrations (`scripts/migrate.ts`, `migrations/`) | No down migrations, missing 001-004 file history, false "SQLite compatible" claim | Half-applied production migration with no rollback path | Document the fold-in (done in code comment — promote to docs); drop the SQLite claim; add down-migration policy |
+| P0 | Performance | Residual hydration (`getLatestSnapshotsMap`, deals free-list, restore replay) | Full `DISTINCT ON` scan still backs health/arbitrage/probes/pages; **free-models capped at 500 locally**; restore uses chunked `bulkInsert` | Next user-visible degradation and slowest operational path as data grows | Push remaining filters down (or a `model_current` materialization); `LIMIT` on free-models; chunked multi-row restore replay reusing `bulkInsert` |
+| P1 | Reliability | Migrations (`scripts/migrate.ts`, `migrations/`) | No down migrations, 001-004 fold-in documented in `migrate.ts:10-19`, SQLite claim dropped | Half-applied production migration with no rollback path | Down-migration policy |
 | P1 | Performance | Pool (`client.ts:20-48`) | No `pool.end()` handling, no transaction pooler, `max: 10` per serverless instance | Burst cold-starts exhaust small Postgres; wedged instances linger | PgBouncer/Supabase pooler evaluation; graceful shutdown; per-instance `max` tuning |
 | P1 | Testing | Cross-backend parity | No parity test, no shared fixture helpers (helpers exist now but parity coverage is one file) | Silent backend divergence on every new table | Expand parity coverage per new table; `vi.useFakeTimers` for clock tests |
 | P2 | Hygiene | `localQueryRunner` | Only a few statement shapes simulated (now fail-loud, good) | Local dev surprises on unimplemented shapes | Extend shapes as needed or route everything through per-function adapters |
-| P2 | Hygiene | Backup/restore allowlists (`backup-db.ts`, `restore-db.ts`) | New tables must be hand-added in 3+ places (now 17 + `schema_migrations` exclusion) | Next new table ships unrestorable, exactly like `teams` did | Derive table list from `information_schema` filtered against an explicit exclusion set, keeping `RESTORE_ORDER` only as an ordering hint with an assertion that every dumped table appears in it |
-| P2 | Hygiene | `.env.example` duplicates | `DATABASE_URL` and `NEXT_PUBLIC_SITE_URL` listed twice each | Copy-paste "works on mine" confusion | De-duplicate and add a boot-time duplicate detector to `validateEnv()` |
+| P2 | Hygiene | Backup/restore allowlists (`backup-db.ts`, `restore-db.ts`) | New tables must be hand-added in 3+ places (now 23 + `schema_migrations` exclusion) | Next new table ships unrestorable, exactly like `teams` did | Derive table list from `information_schema` filtered against an explicit exclusion set, keeping `RESTORE_ORDER` only as an ordering hint with an assertion that every dumped table appears in it |
 | P2 | Testing | E2E + parallelism + coverage | No E2E, serial suite, no coverage gates, time-based tests | Regressions reach users; suite time grows linearly; god-module split lands untested | Playwright smoke (signin → watchlist → alert); per-file workers with isolated schemas (`CREATE SCHEMA test_$worker`); `@vitest/coverage` thresholds on `src/lib` |
 | P2 | Observability | Metrics/tracing (`logger.ts` only) | Logs without metrics, traces, or SLOs | Degradation discovered by users, not dashboards | Request-duration histogram + pool-gauge + error counters; alert on cron failure and catalog p95; page on k6 nightly regressions |
 
