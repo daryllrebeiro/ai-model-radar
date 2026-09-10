@@ -7,53 +7,65 @@ import {
   getLatestSnapshotsMap,
   recordBudgetAlert,
   upsertShadowFinding,
+  recordRoutingAttempt,
+  checkRoutingPilot,
+  hashOwnerEmail,
 } from '@/lib/db/queries';
 import { validatePublicApiRequest } from '@/lib/api-auth';
-import { hasAccess } from '@/lib/feature-flags';
+import { hasAccess, normalizeTier } from '@/lib/feature-flags';
 import { logger } from '@/lib/logger';
 import { resolveRuleUsage, evaluateBudgetRule } from '@/lib/governance';
 import { checkCircuitBreaker, msUntilMonthReset } from '@/lib/spend-breaker';
+import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
 import {
   getDefaultPolicy,
   selectBestModel,
+  selectBenchmarkModel,
+  selectFallbackModel,
   type ModelCandidate,
 } from '@/lib/router';
+import { routingRequestSchema } from '@/lib/validation/api-schemas';
 
 export const dynamic = 'force-dynamic';
 
-interface ChatCompletionRequest {
-  model?: string;
-  messages: Array<{ role: string; content: string }>;
-  temperature?: number;
-  top_p?: number;
-  n?: number;
-  stop?: string | string[];
-  max_tokens?: number;
-  presence_penalty?: number;
-  frequency_penalty?: number;
-  logit_bias?: Record<string, number>;
-  user?: string;
-  stream?: boolean;
-}
-
+/**
+ * R10 — POST /api/v1/chat/completions (pilot-gated inference routing gateway).
+ *
+ * ADR-010 rules, enforced in code:
+ *  - Deny-by-default: ROUTING_ENABLED + pilot allowlist + per-user opt-in.
+ *  - No silent substitution: `model` without `routing_policy` is used verbatim;
+ *    substitution needs an explicit per-request routing_policy.
+ *  - Fail-closed default; fail_open_original is explicit and never substitutes.
+ *  - One upstream attempt, never retried (double-bill risk). Every decision logged.
+ */
 export async function POST(request: NextRequest) {
+  const t0 = Date.now();
   try {
     const auth = await validatePublicApiRequest(request);
     if (!auth.allowed && auth.errorResponse) {
       return auth.errorResponse;
     }
 
-    // Routing requires at least public API access.
-    if (!hasAccess(auth.tier, 'PUBLIC_API_READ')) {
+    // API keys speak the free/developer/production vocabulary — normalize
+    // before hasAccess, which denies unrecognized values (see feature-flags).
+    if (!hasAccess(normalizeTier(auth.tier), 'PUBLIC_API_READ')) {
       return NextResponse.json(
         { error: 'Access denied. Requires an API tier with public API access.' },
         { status: 403, headers: auth.rateLimitHeaders }
       );
     }
 
-    // Spend Circuit Breaker: block proxied calls when a hard-cap budget
-    // rule for the caller's scope is over 100% projected spend. Skipped
-    // entirely when the caller has no hard-cap rules (zero extra queries).
+    // Pilot gate before any routing logic or spend checks.
+    const pilot = await checkRoutingPilot(auth.ownerEmail);
+    if (!pilot.ok) {
+      const disabled = process.env.ROUTING_ENABLED !== 'true';
+      return NextResponse.json(
+        { error: disabled ? 'Routing gateway is disabled.' : 'Routing gateway is in closed pilot.' },
+        { status: disabled ? 503 : 403, headers: auth.rateLimitHeaders }
+      );
+    }
+
+    // Spend Circuit Breaker (unchanged): hard-cap rules block proxied calls.
     if (auth.ownerEmail) {
       const rules = await getBudgetRulesForUser(auth.ownerEmail);
       const hardCapRules = rules.filter((r) => r.active && r.hard_cap === true);
@@ -103,28 +115,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const body = await request.json().catch(() => null);
-    if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
+    const rawBody = await request.json().catch(() => null);
+    const parsed = routingRequestSchema.safeParse(rawBody);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Invalid request: messages must be a non-empty array' },
+        { error: 'Invalid request: messages must be a non-empty array (≤500).' },
         { status: 400, headers: auth.rateLimitHeaders }
       );
     }
+    const body = parsed.data;
+    const modelHint = body.model || '';
 
-    const requestBody = body as ChatCompletionRequest;
-    const modelHint = typeof requestBody.model === 'string' ? requestBody.model.trim() : '';
-
-    if (requestBody.stream) {
+    if (body.stream) {
       return NextResponse.json(
         { error: 'Streaming responses are not supported on this endpoint yet' },
         { status: 400, headers: auth.rateLimitHeaders }
       );
     }
 
-    // Get current catalog + latest probe telemetry in parallel. Health is
-    // derived per model from the newest telemetry record: explicit
-    // online=false excludes the model under require_healthy; models with no
-    // telemetry are allowed but rank below known-healthy ones.
     const [{ models }, telemetry] = await Promise.all([
       getModelCurrentList({ limit: 500 }),
       getRecentEndpointTelemetry({ limit: 500 }),
@@ -146,16 +154,15 @@ export async function POST(request: NextRequest) {
       provider_healthy: healthByModel.get(m.model_id) ?? true,
     }));
 
-    // An explicit model request bypasses policy routing but must exist.
+    // Selection. Explicit model wins verbatim (no substitution, policy ignored).
+    // No model + no policy → 400: never apply default smart routing silently.
     let selectedModel: ModelCandidate | null = null;
+    let policyUsed = 'explicit';
     if (modelHint) {
       const explicit = candidates.find(
         (m) => m.model_id === modelHint || m.name.toLowerCase() === modelHint.toLowerCase()
       );
       if (!explicit) {
-        // Unknown explicit model: record a Shadow-AI sighting (personal
-        // scope, idempotent upsert — repeat calls only refresh last_seen)
-        // before rejecting. Never fails the request itself.
         if (auth.ownerEmail) {
           try {
             await upsertShadowFinding({
@@ -177,50 +184,175 @@ export async function POST(request: NextRequest) {
         );
       }
       selectedModel = explicit;
-    } else {
+    } else if (!body.routing_policy) {
+      return NextResponse.json(
+        { error: 'Invalid request: provide "model" or an explicit "routing_policy" (cheapest|benchmark|fallback_chain). No default routing is applied.' },
+        { status: 400, headers: auth.rateLimitHeaders }
+      );
+    } else if (body.routing_policy === 'cheapest') {
+      policyUsed = 'cheapest';
       selectedModel = selectBestModel(candidates, getDefaultPolicy(auth.tier));
+    } else if (body.routing_policy === 'benchmark') {
+      policyUsed = 'benchmark';
+      const elo = new Map(
+        RAW_BENCHMARK_DATA.filter((b) => b.arena_elo).map((b) => [b.model_id.toLowerCase(), b.arena_elo as number])
+      );
+      selectedModel = selectBenchmarkModel(candidates, getDefaultPolicy(auth.tier), elo);
+    } else {
+      policyUsed = 'fallback_chain';
+      if (!body.fallback_models || body.fallback_models.length === 0) {
+        return NextResponse.json(
+          { error: 'Invalid request: fallback_chain requires "fallback_models".' },
+          { status: 400, headers: auth.rateLimitHeaders }
+        );
+      }
+      selectedModel = selectFallbackModel(candidates, body.fallback_models, true);
     }
 
     if (!selectedModel) {
+      await logAttempt({
+        auth, requested: modelHint || '(policy)', selected: '(none)', policy: policyUsed,
+        upstreamStatus: null, latencyMs: Date.now() - t0, success: false, error: 'No suitable model matching policy constraints',
+      });
       return NextResponse.json(
         { error: 'No suitable model available matching policy constraints' },
         { status: 503, headers: auth.rateLimitHeaders }
       );
     }
 
-    // TODO: proxy the messages to the selected model's provider endpoint.
-    // For now, return the routing decision in OpenAI chat.completion shape.
-    return NextResponse.json(
-      {
-        id: `chatcmpl-${Date.now()}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: selectedModel.model_id,
-        choices: [
+    const substituted = !modelHint || selectedModel.model_id !== modelHint;
+    const upstreamBase = (process.env.ROUTING_UPSTREAM_BASE || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+    const upstreamKey = process.env.ROUTING_UPSTREAM_KEY;
+    if (!upstreamKey) {
+      await logAttempt({
+        auth, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
+        upstreamStatus: null, latencyMs: Date.now() - t0, success: false, error: 'No upstream configured',
+      });
+      return NextResponse.json(
+        { error: 'Routing unavailable: no upstream provider is configured.' },
+        { status: 503, headers: auth.rateLimitHeaders }
+      );
+    }
+
+    // Forward once. No retries on timeout/5xx: a retry could double-bill.
+    const overheadMark = Date.now();
+    const { routing_policy, fallback_models, on_failure, ...passthrough } = body as Record<string, unknown>;
+    void routing_policy; void fallback_models;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 55000);
+    let upstreamRes: Response | null = null;
+    let upstreamErr: string | null = null;
+    try {
+      upstreamRes = await fetch(`${upstreamBase}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${upstreamKey}`,
+          'User-Agent': 'AI-Model-Radar/1.0 Router-Pilot',
+        },
+        body: JSON.stringify({ ...passthrough, model: selectedModel.model_id }),
+        signal: controller.signal,
+      });
+    } catch (err: any) {
+      upstreamErr = err?.name === 'AbortError' ? 'Upstream timeout' : err?.message || 'Upstream unreachable';
+    } finally {
+      clearTimeout(timeout);
+    }
+    const overheadMs = Date.now() - overheadMark;
+
+    if (!upstreamRes || !upstreamRes.ok) {
+      const status = upstreamRes ? upstreamRes.status : null;
+      const errText = upstreamErr || `Upstream HTTP ${status}`;
+      if (on_failure === 'fail_open_original' && modelHint) {
+        // Explicit fail-open: shape-compatible fallback naming the ORIGINAL
+        // model. No substitution, no fabricated completion — explicit.
+        await logAttempt({
+          auth, requested: modelHint, selected: modelHint, policy: `${policyUsed}+fail_open`,
+          upstreamStatus: status, latencyMs: Date.now() - t0, success: false, error: errText,
+        });
+        return NextResponse.json(
           {
-            index: 0,
-            message: {
-              role: 'assistant',
-              content: 'Model routing not yet implemented - this is the router stub.',
-            },
-            finish_reason: 'stop',
+            id: `chatcmpl-fallback-${Date.now()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: modelHint,
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: 'Upstream unavailable — retry this request directly against the requested model.',
+                },
+                finish_reason: 'stop',
+              },
+            ],
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            proxy_fallback: true,
+            proxy_error: errText,
           },
-        ],
-        usage: {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0,
-        },
-        routing: {
-          selected_model: selectedModel.model_id,
-          selected_provider: selectedModel.provider,
-          policy_tier: auth.tier,
-        },
+          {
+            headers: {
+              ...auth.rateLimitHeaders,
+              'X-Radar-Proxy-Fallback': '1',
+              'X-Radar-Overhead-Ms': String(overheadMs),
+            },
+          }
+        );
+      }
+      await logAttempt({
+        auth, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
+        upstreamStatus: status, latencyMs: Date.now() - t0, success: false, error: errText,
+      });
+      return NextResponse.json(
+        { error: 'Upstream provider failed.', detail: errText, retry_direct_model: modelHint || undefined },
+        {
+          status: status === 429 ? 429 : 502,
+          headers: { ...auth.rateLimitHeaders, 'X-Radar-Overhead-Ms': String(overheadMs) },
+        }
+      );
+    }
+
+    const payload = await upstreamRes.json().catch(() => null);
+    await logAttempt({
+      auth, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
+      upstreamStatus: upstreamRes.status, latencyMs: Date.now() - t0, success: true,
+    });
+    return NextResponse.json(payload, {
+      headers: {
+        ...auth.rateLimitHeaders,
+        ...(substituted ? { 'X-Radar-Routed-Model': selectedModel.model_id } : {}),
+        'X-Radar-Overhead-Ms': String(overheadMs),
       },
-      { headers: auth.rateLimitHeaders }
-    );
+    });
   } catch (error: any) {
     logger.error('Chat completion error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+async function logAttempt(input: {
+  auth: { ownerEmail?: string };
+  requested: string;
+  selected: string;
+  policy: string;
+  upstreamStatus: number | null;
+  latencyMs: number;
+  success: boolean;
+  error?: string;
+}): Promise<void> {
+  try {
+    await recordRoutingAttempt({
+      key_prefix: null,
+      owner_email_hash: hashOwnerEmail(input.auth.ownerEmail),
+      requested_model: input.requested,
+      selected_model: input.selected,
+      policy: input.policy,
+      upstream_status: input.upstreamStatus,
+      latency_ms: input.latencyMs,
+      success: input.success,
+      error: input.error || null,
+    });
+  } catch (err) {
+    logger.warn('Routing attempt audit failed:', { error: String(err) });
   }
 }
