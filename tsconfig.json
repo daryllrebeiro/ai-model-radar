@@ -23,5 +23,7 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  // extensions/ are standalone packages (browser MV3 plain JS, vscode with
+  // its own toolchain) — never part of the Next.js typecheck/build.
+  "exclude": ["node_modules", "extensions"]
 }

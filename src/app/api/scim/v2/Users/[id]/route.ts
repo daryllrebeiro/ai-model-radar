@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserById, setUserActive } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
-import { checkScimAuth, scimError, scimUser } from '../route';
+import { checkScimAuth, scimError, scimUser } from '@/lib/scim-helpers';
 
 export const dynamic = 'force-dynamic';
 

@@ -142,17 +142,24 @@ export const authOptions: NextAuthOptions = {
   // cookie, which neuters CSRF against state-changing routes), Secure in
   // production (`__Secure-` prefix enforces it). Non-prod keeps plain http.
   cookies: {
-    sessionToken: {
-      name:
-        process.env.NODE_ENV === 'production'
-          ? '__Secure-next-auth.session-token'
-          : 'next-auth.session-token',
-      options: {
-        httpOnly: true,
-        sameSite: 'lax',
-        path: '/',
-        secure: process.env.NODE_ENV === 'production',
-      },
-    },
+    sessionToken: sessionCookieConfig(process.env.NODE_ENV),
   },
 };
+
+/**
+ * Session-cookie wire contract, factored for testability: production gets
+ * the `__Secure-` prefix + Secure; every other env gets the plain name
+ * over http. httpOnly + SameSite=Lax + Path=/ hold in all envs.
+ */
+export function sessionCookieConfig(nodeEnv: string | undefined) {
+  const isProd = nodeEnv === 'production';
+  return {
+    name: isProd ? '__Secure-next-auth.session-token' : 'next-auth.session-token',
+    options: {
+      httpOnly: true,
+      sameSite: 'lax' as const,
+      path: '/',
+      secure: isProd,
+    },
+  };
+}

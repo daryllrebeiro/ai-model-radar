@@ -6,7 +6,7 @@
 import { ModelSnapshot } from '@/types/models';
 import { ModelEvent } from '@/types/events';
 import { isPostgres, getPgPool, getLocalState, saveLocalState } from './client';
-import { bulkInsert, Queryable } from './_shared';
+import { bulkInsert } from './_shared';
 
 /**
  * Bulk insert snapshots

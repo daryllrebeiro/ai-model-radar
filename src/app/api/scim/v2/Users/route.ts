@@ -5,49 +5,13 @@ import {
   getAllUsers,
   setUserActive,
 } from '@/lib/db/queries';
-import { secretsEqual } from '@/lib/secrets';
 import { handleApiError } from '@/lib/api-error-handler';
+import { LIST_SCHEMA, checkScimAuth, scimError, scimUser } from '@/lib/scim-helpers';
 
 export const dynamic = 'force-dynamic';
 
-const USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
-const ERROR_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:Error';
-const LIST_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:ListResponse';
-
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_COUNT = 100;
-
-/** Bearer SCIM_TOKEN check. Unconfigured token => everything 401 (no config oracle). */
-export function checkScimAuth(request: NextRequest): boolean {
-  const header = request.headers.get('authorization') || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  return secretsEqual(token, process.env.SCIM_TOKEN || '');
-}
-
-export function scimError(status: number, detail: string, scimType = 'invalidValue') {
-  return NextResponse.json(
-    { schemas: [ERROR_SCHEMA], status: String(status), scimType, detail },
-    { status }
-  );
-}
-
-export function scimUser(row: {
-  id: number;
-  email: string;
-  deprovisioned?: boolean;
-  name?: string | null;
-}): Record<string, unknown> {
-  const active = row.deprovisioned !== true;
-  return {
-    schemas: [USER_SCHEMA],
-    id: String(row.id),
-    userName: row.email,
-    active,
-    emails: [{ value: row.email, primary: true }],
-    displayName: row.name || row.email,
-    meta: { resourceType: 'User' },
-  };
-}
 
 function extractEmail(body: any): string | null {
   if (typeof body?.userName === 'string' && EMAIL_RE.test(body.userName.trim())) {

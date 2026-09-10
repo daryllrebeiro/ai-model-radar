@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "strict": true,
+    "noEmit": false,
+    "outDir": "out",
+    "rootDir": ".",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": ["vscode", "node"]
+  },
+  "include": ["extension.ts"]
+}
