@@ -42,6 +42,12 @@ const EXPECTED_TABLES = [
     'webhook_dlq',
     'model_eol',
     'eval_runs',
+    'usage_imports',
+    'compound_rules',
+    'case_studies',
+    'export_connectors',
+    'routing_attempts',
+    'routing_pilot_optins',
   ];
 
 async function ensureSchemaMigrationsTable(pool: any): Promise<void> {

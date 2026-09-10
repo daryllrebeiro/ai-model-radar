@@ -90,6 +90,12 @@ interface LocalDbState {
   webhook_dlq: Array<any>;
   model_eol: Array<any>;
   eval_runs: Array<any>;
+  usage_imports: Array<any>;
+  compound_rules: Array<any>;
+  case_studies: Array<any>;
+  export_connectors: Array<any>;
+  routing_attempts: Array<any>;
+  routing_pilot_optins: Array<any>;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
@@ -119,6 +125,12 @@ function emptyState(): LocalDbState {
     webhook_dlq: [],
     model_eol: [],
     eval_runs: [],
+    usage_imports: [],
+    compound_rules: [],
+    case_studies: [],
+    export_connectors: [],
+    routing_attempts: [],
+    routing_pilot_optins: [],
   };
 }
 
@@ -155,6 +167,12 @@ function getLocalState(): LocalDbState {
       webhook_dlq: parsed.webhook_dlq || [],
       model_eol: parsed.model_eol || [],
       eval_runs: parsed.eval_runs || [],
+      usage_imports: parsed.usage_imports || [],
+      compound_rules: parsed.compound_rules || [],
+      case_studies: parsed.case_studies || [],
+      export_connectors: parsed.export_connectors || [],
+      routing_attempts: parsed.routing_attempts || [],
+      routing_pilot_optins: parsed.routing_pilot_optins || [],
     };
   } catch {
     return emptyState();

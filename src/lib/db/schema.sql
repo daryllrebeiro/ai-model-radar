@@ -368,3 +368,100 @@ CREATE INDEX IF NOT EXISTS idx_approval_votes_approval
   );
 
   CREATE INDEX IF NOT EXISTS idx_fk_orphans_tbl ON fk_orphans(tbl);
+
+-- 17. Usage imports (R5) — private per-user spend data, never aggregated
+CREATE TABLE IF NOT EXISTS usage_imports (
+    id                  SERIAL PRIMARY KEY,
+    user_id             INT REFERENCES users(id) ON DELETE CASCADE,
+    owner_email         VARCHAR(255) NOT NULL,
+    source              VARCHAR(40) NOT NULL DEFAULT 'csv',
+    filename            VARCHAR(255) NOT NULL DEFAULT '',
+    period_start        DATE,
+    period_end          DATE,
+    row_count           INT NOT NULL DEFAULT 0 CHECK (row_count >= 0),
+    total_spend_usd     NUMERIC(14, 4) NOT NULL DEFAULT 0 CHECK (total_spend_usd >= 0),
+    rows_json           JSONB NOT NULL DEFAULT '[]',
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_imports_user ON usage_imports(user_id);
+
+-- 18. Compound alert rules (R6) — fixed condition set + AND/OR, no eval
+CREATE TABLE IF NOT EXISTS compound_rules (
+    id                  SERIAL PRIMARY KEY,
+    user_id             INT REFERENCES users(id) ON DELETE CASCADE,
+    owner_email         VARCHAR(255) NOT NULL,
+    name                VARCHAR(120) NOT NULL,
+    logic               VARCHAR(3) NOT NULL DEFAULT 'and' CHECK (logic IN ('and', 'or')),
+    conditions          JSONB NOT NULL DEFAULT '[]',
+    channel             VARCHAR(20) NOT NULL DEFAULT 'webhook' CHECK (channel IN ('webhook', 'email')),
+    destination         TEXT NOT NULL,
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_compound_rules_user ON compound_rules(user_id);
+
+-- 19. Case studies (R7) — opt-in public sharing, moderation queue
+CREATE TABLE IF NOT EXISTS case_studies (
+    id                  SERIAL PRIMARY KEY,
+    user_id             INT REFERENCES users(id) ON DELETE SET NULL,
+    owner_email         VARCHAR(255) NOT NULL,
+    team_name           VARCHAR(120) NOT NULL DEFAULT '',
+    from_model_id       TEXT NOT NULL,
+    to_model_id         TEXT NOT NULL,
+    savings_usd_per_month NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (savings_usd_per_month >= 0),
+    period_label        VARCHAR(60) NOT NULL DEFAULT '',
+    story               TEXT NOT NULL DEFAULT '',
+    usage_import_id     INT REFERENCES usage_imports(id) ON DELETE SET NULL,
+    consent_confirmed   BOOLEAN NOT NULL DEFAULT FALSE,
+    status              VARCHAR(20) NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'approved', 'rejected', 'removed')),
+    reviewed_at         TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_case_studies_status ON case_studies(status, created_at DESC);
+
+-- 20. Export connectors (R8) — specific integrations, write-only secrets
+CREATE TABLE IF NOT EXISTS export_connectors (
+    id                  SERIAL PRIMARY KEY,
+    user_id             INT REFERENCES users(id) ON DELETE CASCADE,
+    owner_email         VARCHAR(255) NOT NULL,
+    name                VARCHAR(120) NOT NULL,
+    type                VARCHAR(20) NOT NULL
+                        CHECK (type IN ('datadog', 'grafana', 'notion', 'airtable')),
+    destination_url     TEXT NOT NULL DEFAULT '',
+    secret              TEXT,
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    last_run_at         TIMESTAMPTZ,
+    last_status         VARCHAR(20),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_export_connectors_user ON export_connectors(user_id);
+
+-- 21. Routing telemetry + pilot opt-ins (R10) — reliability before usage
+CREATE TABLE IF NOT EXISTS routing_attempts (
+    id                  BIGSERIAL PRIMARY KEY,
+    key_prefix          VARCHAR(64),
+    owner_email_hash    VARCHAR(64),
+    requested_model     TEXT NOT NULL,
+    selected_model      TEXT NOT NULL,
+    policy              VARCHAR(40) NOT NULL DEFAULT '',
+    upstream_status     INT,
+    latency_ms          INT,
+    success             BOOLEAN NOT NULL,
+    error               TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_routing_attempts_time ON routing_attempts(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS routing_pilot_optins (
+    id                  SERIAL PRIMARY KEY,
+    owner_email         VARCHAR(255) UNIQUE NOT NULL,
+    approved            BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
