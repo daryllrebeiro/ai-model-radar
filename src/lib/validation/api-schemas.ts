@@ -7,6 +7,20 @@ export const modelsQuerySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((val) => val === 'true'),
+  // R3/R4 attribute filters (sourced static datasets, applied post-query —
+  // no DB column, no event-history write). Absent = no filtering.
+  tool_calling: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((val) => (val === undefined ? undefined : val === 'true')),
+  vision: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((val) => (val === undefined ? undefined : val === 'true')),
+  commercial: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((val) => (val === undefined ? undefined : val === 'true')),
   sortBy: z.enum(['name', 'price', 'context', 'updated']).default('name'),
   limit: z
     .string()
@@ -206,4 +220,58 @@ export const testWebhookSchema = z.object({
   destinationUrl: z.string().url(),
   secret: z.string().optional(),
   event: z.record(z.any()).optional(),
+});
+
+// R5 usage import (CSV upload MVP). Caps mirror src/lib/usage-import.ts.
+export const usageImportSchema = z.object({
+  filename: z.string().trim().max(255).optional().default(''),
+  csv: z.string().min(1).max(2 * 1024 * 1024),
+  period_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  period_end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+});
+
+// R6 compound rule (fixed condition set — no expression language).
+export const compoundConditionSchema = z.object({
+  field: z.enum(['category', 'price_drop_pct', 'context_min', 'provider', 'event_type']),
+  op: z.enum(['eq', 'gte', 'lte', 'contains']),
+  value: z.union([z.string().max(200), z.number()]),
+});
+
+export const compoundRuleSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  logic: z.enum(['and', 'or']).default('and'),
+  conditions: z.array(compoundConditionSchema).min(1).max(10),
+  channel: z.enum(['webhook', 'email']).default('webhook'),
+  destination: z.string().trim().min(1).max(2000),
+});
+
+// R7 case study submission (explicit public-sharing consent required).
+export const caseStudySchema = z.object({
+  team_name: z.string().trim().max(120).optional().default(''),
+  from_model_id: z.string().trim().min(1).max(200),
+  to_model_id: z.string().trim().min(1).max(200),
+  savings_usd_per_month: z.coerce.number().min(0).max(10_000_000),
+  period_label: z.string().trim().max(60).optional().default(''),
+  story: z.string().trim().max(5000).optional().default(''),
+  usage_import_id: z.coerce.number().int().positive().optional().nullable(),
+  consent: z.literal(true, { errorMap: () => ({ message: 'Explicit public-sharing consent is required.' }) }),
+});
+
+// R10 routing request (pilot). routing_policy is REQUIRED for any model
+// substitution — absent policy means "use my model verbatim or 400".
+export const routingRequestSchema = z.object({
+  model: z.string().trim().min(1).max(200).optional(),
+  messages: z.array(z.object({ role: z.string().max(50), content: z.unknown() })).min(1).max(500),
+  routing_policy: z.enum(['cheapest', 'benchmark', 'fallback_chain']).optional(),
+  fallback_models: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
+  on_failure: z.enum(['fail_closed', 'fail_open_original']).optional().default('fail_closed'),
+  stream: z.boolean().optional(),
+}).passthrough();
+
+// R8 export connector config (secret is write-only, never returned).
+export const exportConnectorSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  type: z.enum(['datadog', 'grafana', 'notion', 'airtable']),
+  destination_url: z.string().trim().max(2000).optional().default(''),
+  secret: z.string().max(2000).optional(),
 });

@@ -3,6 +3,10 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getModelDetail, getModelCurrentList, getLatestSnapshotsMap, getEvents, getRecentEndpointTelemetry } from '@/lib/db/queries';
+import { findCapabilityForModel } from '@/lib/capabilities';
+import { findLicenseForModel } from '@/lib/licenses';
+import { CAPABILITY_FLAGS } from '@/types/capabilities';
+import { LICENSE_DISCLAIMER } from '@/types/licenses';
 import { PriceChart } from '@/components/models/price-chart';
 import { ModelSpecs } from '@/components/models/model-specs';
 import { ReliabilityCard } from '@/components/models/reliability-card';
@@ -120,6 +124,73 @@ export default async function ModelDetailPage({ params }: ModelDetailPageProps) 
         </h2>
         <ModelSpecs model={current} />
       </section>
+
+      {/* 1b. R3/R4: sourced capabilities + license (new data, not a new page) */}
+      {(() => {
+        const capability = findCapabilityForModel(current.model_id);
+        const license = findLicenseForModel(current.model_id);
+        if (!capability && !license) return null;
+        return (
+          <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {capability && (
+              <div className="p-5 rounded-2xl border border-gray-800 bg-[#111827]/70 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-base font-bold text-white tracking-tight">Capabilities</h2>
+                  <a href={capability.source_url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-mono text-cyan-400 hover:underline">
+                    {capability.source_name} · {capability.verified_date}
+                  </a>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono">
+                  {CAPABILITY_FLAGS.map(({ key, label }) => {
+                    const v = capability[key];
+                    return (
+                      <div key={key} className="flex items-center justify-between px-2 py-1 rounded-lg bg-[#0B0F17] border border-gray-800/60">
+                        <span className="text-gray-400 truncate pr-2">{label}</span>
+                        <span className={v === true ? 'text-emerald-400 font-bold' : 'text-gray-600'}>
+                          {v === true ? 'Yes' : v === false ? 'No' : '—'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] font-mono text-gray-500">Unsourced flags are shown as —, never guessed.</p>
+              </div>
+            )}
+            {license && (
+              <div className="p-5 rounded-2xl border border-gray-800 bg-[#111827]/70 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-base font-bold text-white tracking-tight">License</h2>
+                  <a href={license.source_url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-mono text-cyan-400 hover:underline">
+                    {license.source_name} · {license.verified_date}
+                  </a>
+                </div>
+                <div className="text-xs font-mono space-y-1.5">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-gray-400">License</span>
+                    <span className="text-gray-200 text-right">{license.license_id}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-gray-400">Commercial use</span>
+                    <span className={
+                      license.commercial_use_allowed === true
+                        ? 'text-emerald-400 font-bold'
+                        : license.commercial_use_allowed === false
+                        ? 'text-red-400 font-bold'
+                        : 'text-gray-500'
+                    }>
+                      {license.commercial_use_allowed === true ? 'Allowed' : license.commercial_use_allowed === false ? 'Not allowed' : 'Unknown — review needed'}
+                    </span>
+                  </div>
+                  {license.commercial_use_note && (
+                    <p className="text-[11px] text-gray-400 leading-relaxed">{license.commercial_use_note}</p>
+                  )}
+                  <p className="text-[10px] text-gray-500">{LICENSE_DISCLAIMER}</p>
+                </div>
+              </div>
+            )}
+          </section>
+        );
+      })()}
 
       {/* 2. Migration & Alternatives Recommendations */}
       {migrationReport && migrationReport.alternatives.length > 0 && (

@@ -2,6 +2,10 @@ import React from 'react';
 import Link from 'next/link';
 import { getModelDetail, getModelCurrentList } from '@/lib/db/queries';
 import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
+import { findCapabilityForModel } from '@/lib/capabilities';
+import { findLicenseForModel } from '@/lib/licenses';
+import { CAPABILITY_FLAGS } from '@/types/capabilities';
+import { LICENSE_DISCLAIMER } from '@/types/licenses';
 import { computeArbitrageOpportunities } from '@/lib/arbitrage';
 import { PriceChart } from '@/components/models/price-chart';
 import { CompareButton } from '@/components/compare/compare-button';
@@ -50,6 +54,8 @@ export default async function ComparePage({ searchParams }: ComparePageProps) {
         events: detail?.events || [],
         benchmark: benchmark || null,
         arbitrage: arbitrage || null,
+        capability: findCapabilityForModel(id),
+        license: findLicenseForModel(id),
       };
     })
   );
@@ -306,6 +312,94 @@ export default async function ComparePage({ searchParams }: ComparePageProps) {
                     ) : (
                       <div className="p-3 rounded-xl bg-gray-900/40 border border-gray-800 text-center text-xs text-gray-400 font-mono">
                         Awaiting official evaluation report
+                      </div>
+                    )}
+                  </div>
+
+                  {/* R3: Sourced capability matrix (no scores, unknown = —) */}
+                  <div className="space-y-2 border-t border-gray-800/80 pt-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono text-gray-400 uppercase font-semibold">
+                        Capabilities
+                      </span>
+                      {item.capability && (
+                        <a
+                          href={item.capability.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] font-mono text-cyan-400 hover:underline"
+                        >
+                          {item.capability.source_name} · {item.capability.verified_date}
+                        </a>
+                      )}
+                    </div>
+                    {item.capability ? (
+                      <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono">
+                        {CAPABILITY_FLAGS.map(({ key, label }) => {
+                          const v = item.capability?.[key];
+                          return (
+                            <div
+                              key={key}
+                              className="flex items-center justify-between px-2 py-1 rounded-lg bg-[#0B0F17] border border-gray-800/60"
+                            >
+                              <span className="text-gray-400 truncate pr-2">{label}</span>
+                              <span className={v === true ? 'text-emerald-400 font-bold' : v === false ? 'text-gray-500' : 'text-gray-600'}>
+                                {v === true ? 'Yes' : v === false ? 'No' : '—'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-xl bg-gray-900/40 border border-gray-800 text-center text-xs text-gray-400 font-mono">
+                        No sourced capability record yet
+                      </div>
+                    )}
+                  </div>
+
+                  {/* R4: License summary (not legal advice) */}
+                  <div className="space-y-2 border-t border-gray-800/80 pt-4">
+                    <span className="text-xs font-mono text-gray-400 uppercase font-semibold">
+                      License
+                    </span>
+                    {item.license ? (
+                      <div className="p-3 rounded-xl bg-[#0B0F17] border border-gray-800/60 text-xs font-mono space-y-1.5">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-400">License</span>
+                          <span className="text-gray-200 text-right">{item.license.license_id}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-400">Commercial use</span>
+                          <span className={
+                            item.license.commercial_use_allowed === true
+                              ? 'text-emerald-400 font-bold'
+                              : item.license.commercial_use_allowed === false
+                              ? 'text-red-400 font-bold'
+                              : 'text-gray-500'
+                          }>
+                            {item.license.commercial_use_allowed === true
+                              ? 'Allowed'
+                              : item.license.commercial_use_allowed === false
+                              ? 'Not allowed'
+                              : 'Unknown — review needed'}
+                          </span>
+                        </div>
+                        {item.license.commercial_use_note && (
+                          <p className="text-[11px] text-gray-400 leading-relaxed">{item.license.commercial_use_note}</p>
+                        )}
+                        <p className="text-[10px] text-gray-500">{LICENSE_DISCLAIMER}</p>
+                        <a
+                          href={item.license.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-cyan-400 hover:underline block"
+                        >
+                          Source: {item.license.source_name} · {item.license.verified_date}
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-xl bg-gray-900/40 border border-gray-800 text-center text-xs text-gray-400 font-mono">
+                        No sourced license record yet
                       </div>
                     )}
                   </div>
