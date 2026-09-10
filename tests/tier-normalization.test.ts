@@ -11,6 +11,8 @@ import {
 import { generateApiKey } from '../src/lib/api-keys';
 import { POST as askRoute } from '../src/app/api/v1/ask/route';
 import { GET as governanceStatusRoute } from '../src/app/api/v1/governance/status/route';
+import { POST as chatCompletionsRoute } from '../src/app/api/v1/chat/completions/route';
+import { createRoutingOptIn } from '../src/lib/db/queries';
 
 afterEach(() => {
   delete process.env.FEATURE_ENFORCEMENT;
@@ -153,6 +155,48 @@ describe('Phase 1.1 - Tier vocabulary normalization (P0)', () => {
     // Idempotent: second run changes nothing
     const again = await normalizeAllUserTiers();
     expect(again.updated.filter((u) => u.startsWith(`tier.raw.`))).toHaveLength(0);
+  });
+
+  it('7. PIN: chat/completions tier gate normalizes key vocabulary (R10-path recurrence)', async () => {
+    // Recurrence of the Phase-1 vocabulary bug on a route added AFTER the
+    // original fix: hasAccess(auth.tier) denied every real key tier because
+    // keys speak free/developer/production. Pilot-enabled members on all
+    // three key tiers must clear the PUBLIC_API_READ gate (unknown explicit
+    // model → deterministic 404, proving gate-pass, never 403).
+    process.env.ROUTING_ENABLED = 'true';
+    delete process.env.ROUTING_UPSTREAM_KEY;
+    const stamp = `${Date.now()}.${Math.floor(Math.random() * 1e6)}`;
+    for (const tier of KEY_TIERS) {
+      const email = `tier.chat.${tier}.${stamp}@test.dev`;
+      const key = await keyFor(email, tier);
+      process.env.ROUTING_PILOT_ALLOWLIST = email;
+      await createRoutingOptIn(email);
+      const res = await chatCompletionsRoute(
+        withAuth('http://localhost/api/v1/chat/completions', key, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'nope/missing-pin', messages: [{ role: 'user', content: 'hi' }] }),
+        })
+      );
+      expect(res.status).toBe(404);
+    }
+    // Same path under staging-equivalent enforcement: gate is unconditional,
+    // so the flag must not change the outcome.
+    process.env.FEATURE_ENFORCEMENT = 'true';
+    const email = `tier.chat.enf.${stamp}@test.dev`;
+    const key = await keyFor(email, 'developer');
+    process.env.ROUTING_PILOT_ALLOWLIST = email;
+    await createRoutingOptIn(email);
+    const res = await chatCompletionsRoute(
+      withAuth('http://localhost/api/v1/chat/completions', key, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'nope/missing-pin', messages: [{ role: 'user', content: 'hi' }] }),
+      })
+    );
+    expect(res.status).toBe(404);
+    delete process.env.ROUTING_ENABLED;
+    delete process.env.ROUTING_PILOT_ALLOWLIST;
   });
 });
 

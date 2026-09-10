@@ -20,6 +20,9 @@ This document maintains the complete inventory of operational secrets, third-par
 | `UNSUBSCRIBE_SECRET` | Security & Privacy | **YES** | HMAC signing key for generating one-click unsubscribe links. | Generating and verifying constant-time HMAC-SHA256 email tokens. | 1 Year |
 | `SLACK_SIGNING_SECRET` | Security & Integrations | **YES if Slack bot enabled** | Slack v0 HMAC verification for `/api/bot/slash`. | Verifying Slack slash-command signatures (+5min timestamp tolerance). | 1 Year |
 | `DISCORD_PUBLIC_KEY` | Security & Integrations | **YES if Discord bot enabled** | Ed25519 verification for `/api/bot/slash` Discord interactions. | Verifying Discord interaction signatures. | 1 Year (on bot re-install) |
+| `EXPORT_CONNECTOR_KEY` | Security & Integrations | **YES if export connectors store tokens** | Key-encrypting key (SHA-256 → AES-256-GCM) for third-party connector tokens in `export_connectors.secret`. | Held in the deployment secret store ONLY — never in the database, backups, or logs. Readable solely by the app runtime (decrypts at delivery time). | 90 Days (see rotation below) |
+| `ROUTING_UPSTREAM_KEY` | Routing Pilot (R10) | **YES if routing pilot enabled** | Bearer key for the upstream OpenAI-compatible endpoint proxied by `/api/v1/chat/completions`. | Outbound forwarding only. Without it the gateway answers 503. | 90 Days |
+| `ROUTING_ENABLED` / `ROUTING_PILOT_ALLOWLIST` | Routing Pilot (R10) | Pilot control plane (not secrets, but access-critical) | Kill switch + operator allowlist (comma-separated emails) gating the routing gateway alongside per-user opt-in rows. | Changing either takes effect without a deploy being strictly required (env reload). | Review membership on every pilot change |
 
 ---
 
@@ -60,6 +63,26 @@ server-side session kill switch. To lock out a compromised account immediately:
 `SLACK_SIGNING_SECRET` / `DISCORD_PUBLIC_KEY` changes take effect on next
 deployment (read per-request from env). After rotation, the other platform
 keeps working; unset-both in production returns 503 (fail-closed).
+
+### Rotating `EXPORT_CONNECTOR_KEY` (manual, executable as-is)
+Single-key envelope (`enc:v1:`); there is no dual-key decrypt, so rotation
+re-encrypts by re-registration. Old ciphertext becomes unreadable on purpose —
+connector runs fail closed with an explicit "rotate the connector" signal
+instead of delivering with the wrong key.
+1. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+2. Set the new value in the deployment secret store (same place as the old
+   one — never in the database, backups, or chat).
+3. Redeploy / reload env. Confirm the app boots (creation without a key
+   would now 400, proving the new key is live: register a test connector
+   with a dummy secret, then delete it).
+4. For each connector with `has_secret=true`: delete and re-register it with
+   its third-party token (or rotate the third-party token itself at the
+   vendor, then re-register). Runs against not-yet-rotated rows fail with
+   the explicit rotate signal — that is the detection mechanism.
+5. Verify: `SELECT COUNT(*) FROM export_connectors WHERE secret NOT LIKE 'enc:v1:%'`
+   must be 0 for rows expected to carry secrets; spot-run one connector per
+   type and confirm `last_status='success'`.
+6. Revoke/forget the old key value everywhere it was stored.
 
 ---
 
