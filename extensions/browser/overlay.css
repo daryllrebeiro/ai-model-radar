@@ -1,0 +1,29 @@
+#amr-overlay-badge {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  font-family: ui-monospace, monospace;
+}
+#amr-overlay-badge .amr-card {
+  background: #0b0f17;
+  border: 1px solid #164e63;
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #e5e7eb;
+  max-width: 300px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+#amr-overlay-badge .amr-title { display: block; font-weight: 700; font-size: 12px; }
+#amr-overlay-badge .amr-sub { display: block; color: #9ca3af; font-size: 11px; margin-top: 2px; }
+#amr-overlay-badge .amr-cta { display: inline-block; margin-top: 6px; color: #22d3ee; font-size: 11px; }
+#amr-overlay-badge .amr-x {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 14px;
+}

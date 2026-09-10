@@ -1,0 +1,29 @@
+{
+  "name": "ai-model-radar-hints",
+  "displayName": "AI Model Radar — Price & Context Hints (R2)",
+  "description": "Inline price/context hints for recognized model ids. Read-only; no code rewriting, no codebase telemetry.",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onLanguage:python", "onLanguage:typescript", "onLanguage:javascript", "onLanguage:json", "onLanguage:yaml"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "AI Model Radar",
+      "properties": {
+        "aiModelRadar.baseUrl": {
+          "type": "string",
+          "default": "https://ai-model-radar.example",
+          "description": "Radar base URL for the public API + comparator links."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.9.3"
+  }
+}

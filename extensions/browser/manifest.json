@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "AI Model Radar — Price & Context Badge (R1)",
+  "version": "0.1.0",
+  "description": "Dismissible overlay with current price + context summary on recognized model pages. Read-only; no page rewriting, no history collection.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://ai-model-radar.example/*"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://openrouter.ai/models/*",
+        "https://openai.com/*",
+        "https://www.anthropic.com/*",
+        "https://ai.google.dev/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
+      "js": ["allowlist.js", "api-client.js", "content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_title": "AI Model Radar" }
+}
