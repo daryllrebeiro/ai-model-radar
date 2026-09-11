@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireFeature } from '@/lib/access-guard';
 import { checkSessionRateLimit } from '@/lib/api-auth';
-import { getTeamRole, getTeam } from '@/lib/db/queries';
+import { getTeamRole, getTeam, createTeamInvite } from '@/lib/db/queries';
 import { handleApiError } from '@/lib/api-error-handler';
-import { createInviteToken } from '@/lib/team-invites';
+import { createInviteToken, INVITE_TTL_MS } from '@/lib/team-invites';
+import { hashInviteToken } from '@/lib/db/team-invites';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,6 +54,15 @@ export async function POST(
     let token: string;
     try {
       token = createInviteToken({ teamId, email, role: wantAdmin ? 'admin' : 'member' });
+      // Ledger the mint for single-use redemption (atomic claim on join).
+      await createTeamInvite({
+        teamId,
+        email,
+        role: wantAdmin ? 'admin' : 'member',
+        tokenHash: hashInviteToken(token),
+        createdByEmail: session.user.email,
+        expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+      });
     } catch (err: any) {
       return NextResponse.json({ error: err.message || 'Invite signing unavailable' }, { status: 503 });
     }

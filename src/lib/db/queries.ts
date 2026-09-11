@@ -30,6 +30,7 @@ export * from './api-keys';
 export * from './alerts';
 export * from './watchlists';
 export * from './teams';
+export * from './team-invites';
 export * from './profiles';
 export * from './telemetry';
 export * from './governance';

@@ -10,6 +10,7 @@ import { ModelEvent, MarketStats, PriceDropDeal } from '@/types/events';
 import { isPostgres, getPgPool, getLocalState } from './client';
 import { extractProvider } from '../utils';
 import { getEvents } from './events';
+import { toIsoString } from './_shared';
 
 /**
  * Returns latest snapshot per model_id
@@ -36,7 +37,7 @@ export async function getLatestSnapshotsMap(): Promise<Map<string, ModelSnapshot
         modality: row.modality,
         is_free: Boolean(row.is_free),
         raw_json: typeof row.raw_json === 'string' ? JSON.parse(row.raw_json) : row.raw_json,
-        polled_at: row.polled_at,
+        polled_at: toIsoString(row.polled_at),
       });
     }
   } else {
@@ -245,7 +246,7 @@ export async function getModelDetail(modelId: string): Promise<{
       modality: r.modality,
       is_free: Boolean(r.is_free),
       raw_json: typeof r.raw_json === 'string' ? JSON.parse(r.raw_json) : r.raw_json,
-      polled_at: r.polled_at,
+        polled_at: toIsoString(r.polled_at),
     }));
 
     events = eRes.rows.map((r: any) => ({
@@ -346,7 +347,7 @@ export async function getModelPriceHistory(
       modality: r.modality,
       is_free: Boolean(r.is_free),
       raw_json: typeof r.raw_json === 'string' ? JSON.parse(r.raw_json) : r.raw_json,
-      polled_at: r.polled_at,
+        polled_at: toIsoString(r.polled_at),
     }));
 
     events = eRes.rows.map((r: any) => ({

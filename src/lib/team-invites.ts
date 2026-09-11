@@ -5,12 +5,15 @@
  * in the routes; this module is pure token mint/verify.
  */
 import crypto from 'crypto';
+import { secretsEqual } from './secrets';
 
 export interface TeamInvitePayload {
   teamId: number;
   email: string;
   role: 'member' | 'admin';
   exp: number;
+  /** Per-token nonce: binds the HMAC to one ledger row for single-use. */
+  nonce: string;
 }
 
 export const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -50,6 +53,7 @@ export function createInviteToken(
     email,
     role: input.role === 'admin' ? 'admin' : 'member',
     exp: nowMs + (input.ttlMs ?? INVITE_TTL_MS),
+    nonce: crypto.randomBytes(16).toString('hex'),
   };
   const body = b64urlEncode(JSON.stringify(payload));
   const sig = b64urlEncode(crypto.createHmac('sha256', inviteSecret(env)).update(body).digest());
@@ -72,15 +76,15 @@ export function verifyInviteToken(
   } catch {
     return null;
   }
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  // Project-standard constant-time compare (Edge-safe manual XOR).
+  if (!secretsEqual(sig, expected)) return null;
   try {
     const payload = JSON.parse(b64urlDecode(body).toString('utf-8')) as TeamInvitePayload;
     if (!Number.isInteger(payload.teamId) || payload.teamId <= 0) return null;
     if (typeof payload.email !== 'string' || !payload.email.includes('@')) return null;
     if (payload.role !== 'member' && payload.role !== 'admin') return null;
     if (typeof payload.exp !== 'number' || payload.exp <= nowMs) return null;
+    if (typeof payload.nonce !== 'string' || payload.nonce.length < 16) return null;
     return { ...payload, email: payload.email.toLowerCase() };
   } catch {
     return null;

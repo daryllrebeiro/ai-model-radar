@@ -23,6 +23,7 @@ export const TABLE_MANIFEST: TableDef[] = [
   { pg: 'usage_profiles', local: 'usage_profiles', serial: true },
   { pg: 'team_members', local: 'team_members', serial: true },
   { pg: 'team_watchlists', local: 'team_watchlists', serial: true },
+  { pg: 'team_invites', local: 'team_invites', serial: true },
   { pg: 'budget_rules', local: 'budget_rules', serial: true },
   { pg: 'budget_alerts', local: 'budget_alerts', serial: true },
   { pg: 'shadow_ai_findings', local: 'shadow_ai_findings', serial: true },

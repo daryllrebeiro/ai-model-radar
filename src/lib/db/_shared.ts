@@ -10,6 +10,21 @@ export const BULK_CHUNK_ROWS = 1000;
 
 export type Queryable = { query: (sql: string, params: any[]) => Promise<any> };
 
+/**
+ * Audit follow-up (backend-divergence crash): node-pg returns TIMESTAMPTZ
+ * as Date objects while the JSON backend stores ISO strings — but every
+ * row type declares ISO strings. Normalize at the PG mapper boundary so
+ * downstream code (`.slice`, string compare, JSON) behaves identically on
+ * both backends. Fail-loud on garbage: a corrupt timestamp must surface,
+ * not silently become "now".
+ */
+export function toIsoString(v: unknown): string {
+  if (typeof v === 'string') return v;
+  const t = v instanceof Date ? v.getTime() : new Date(v as any).getTime();
+  if (!Number.isFinite(t)) throw new Error('Invalid timestamp value from database row.');
+  return new Date(t).toISOString();
+}
+
 export async function bulkInsert(
   client: Queryable,
   table: string,

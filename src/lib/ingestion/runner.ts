@@ -1,5 +1,6 @@
 import { fetchOpenRouterModels, normalizeOpenRouterModel } from './openrouter';
 import { isSourceAvailable, recordSourceSuccess, recordSourceFailure } from './circuit';
+import { invalidateCatalogCache } from '../catalog-cache';
 import { computeModelDiffs } from './diff';
 import {
   getLatestSnapshotsMap,
@@ -117,7 +118,11 @@ export async function runIngestionCycle(options: {
 
     runLogger.info('Ingestion cycle persisted atomically to database');
 
-    // 5. Ping external heartbeat monitor on success
+    // 5. Fresh data just landed: drop the catalog TTL cache so read routes
+    // converge immediately (TTL remains the backstop, not the mechanism).
+    invalidateCatalogCache();
+
+    // 6. Ping external heartbeat monitor on success
     await pingHeartbeat(runId);
 
     return {

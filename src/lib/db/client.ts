@@ -78,6 +78,7 @@ interface LocalDbState {
   teams: Array<any>;
   team_members: Array<any>;
   team_watchlists: Array<any>;
+  team_invites: Array<any>;
   usage_profiles: Array<any>;
   endpoint_telemetry: Array<any>;
   budget_rules: Array<any>;
@@ -129,6 +130,7 @@ function emptyState(): LocalDbState {
     teams: [],
     team_members: [],
     team_watchlists: [],
+    team_invites: [],
     usage_profiles: [],
     endpoint_telemetry: [],
     budget_rules: [],
@@ -171,6 +173,7 @@ function getLocalState(): LocalDbState {
       teams: parsed.teams || [],
       team_members: parsed.team_members || [],
       team_watchlists: parsed.team_watchlists || [],
+      team_invites: parsed.team_invites || [],
       usage_profiles: parsed.usage_profiles || [],
       endpoint_telemetry: parsed.endpoint_telemetry || [],
       budget_rules: parsed.budget_rules || [],

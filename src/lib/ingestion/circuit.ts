@@ -67,3 +67,16 @@ export function breakerState(source: string, nowMs = Date.now(), cooldownMs = SO
 export function resetSourceBreakers(): void {
   breakers.clear();
 }
+
+/** Ops snapshot for /admin/health: every known source and its state. */
+export function breakerStates(nowMs = Date.now(), cooldownMs = SOURCE_BREAKER_COOLDOWN_MS): Record<string, { state: BreakerState; failures: number; lastError: string | null }> {
+  const out: Record<string, { state: BreakerState; failures: number; lastError: string | null }> = {};
+  for (const [source, e] of breakers) {
+    out[source] = {
+      state: breakerState(source, nowMs, cooldownMs),
+      failures: e.failures,
+      lastError: e.lastError,
+    };
+  }
+  return out;
+}

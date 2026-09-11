@@ -7,6 +7,7 @@ import { ModelEvent, EventFilterParams } from '@/types/events';
 import { isPostgres, getPgPool, getLocalState } from './client';
 import { extractProvider } from '../utils';
 import { encodeCursor, decodeCursor } from '../pagination';
+import { toIsoString } from './_shared';
 
 /**
  * Bounded Postgres implementation of getEvents. All predicates, ordering, and
@@ -112,7 +113,7 @@ async function getEventsBounded(opts: {
     new_value: typeof row.new_value === 'string' ? JSON.parse(row.new_value) : row.new_value,
     pct_change: row.pct_change !== null ? Number(row.pct_change) : null,
     source: row.source,
-    detected_at: row.detected_at,
+    detected_at: toIsoString(row.detected_at),
     model_name: row.model_name || row.model_id,
     provider: row.provider || extractProvider(row.model_id),
     context_length: row.context_length,

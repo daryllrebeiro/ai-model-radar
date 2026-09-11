@@ -78,9 +78,11 @@ describe('P3 team invites (HMAC tokens, no new table)', () => {
 
   it('mint → verify round-trips; tampering/expiry/transfer fail', () => {
     const token = createInviteToken({ teamId: 9, email: 'New@x.dev' }, ENV, 1000);
-    expect(verifyInviteToken(token, ENV, 2000)).toEqual({
+    const verified = verifyInviteToken(token, ENV, 2000)!;
+    expect(verified).toMatchObject({
       teamId: 9, email: 'new@x.dev', role: 'member', exp: 1000 + 7 * 24 * 3600 * 1000,
     });
+    expect(verified.nonce).toMatch(/^[0-9a-f]{32}$/);
     expect(verifyInviteToken(token + 'x', ENV, 2000)).toBeNull();
     expect(verifyInviteToken(token, ENV, 1000 + 7 * 24 * 3600 * 1000 + 1)).toBeNull();
     expect(verifyInviteToken(token, { TEAM_INVITE_SECRET: 'other' } as any, 2000)).toBeNull();
@@ -133,6 +135,69 @@ describe('P3 team invites (HMAC tokens, no new table)', () => {
       auth(member, memberPair.plaintextKey, 'http://localhost/api/teams/join', { token: invite_token })
     );
     expect(joined.status).toBe(201);
+
+    // REPLAY: the same token is now consumed — second redemption fails.
+    const replay = await joinRoute(
+      auth(member, memberPair.plaintextKey, 'http://localhost/api/teams/join', { token: invite_token })
+    );
+    expect(replay.status).toBe(400);
+  });
+
+  it('audit: expired ledger rows reject; non-owner cannot mint admin; tampered role fails', async () => {
+    process.env.TEAM_INVITE_SECRET = 'p3-route-secret';
+    const owner = uniqueEmail('p3a.owner');
+    const member = uniqueEmail('p3a.member');
+    await createOrGetUser({ email: owner });
+    await createOrGetUser({ email: member });
+    const ownerPair = generateApiKey(owner, 'production');
+    await createApiKey(ownerPair.keyRecord);
+    const memberPair = generateApiKey(member, 'production');
+    await createApiKey(memberPair.keyRecord);
+    const team = await createTeam(`p3a team ${Date.now()}`, owner);
+    const teamId = (team as any).id;
+    const auth = (key: string, url: string, body: unknown) =>
+      new NextRequest(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify(body),
+      });
+
+    // Member (non-owner) minting an admin invite → 403.
+    const { addTeamMember } = await import('../src/lib/db/queries');
+    await addTeamMember(teamId, member, 'admin');
+    const esc = await inviteRoute(
+      auth(memberPair.plaintextKey, `http://localhost/api/teams/${teamId}/invites`, { email: uniqueEmail('p3a.victim'), role: 'admin' }),
+      { params: { teamId: String(teamId) } }
+    );
+    expect(esc.status).toBe(403);
+
+    // Expired ledger row: mint with negative TTL, ledger it as expired, join → 400.
+    const { createInviteToken } = await import('../src/lib/team-invites');
+    const { createTeamInvite, hashInviteToken } = await import('../src/lib/db/team-invites');
+    const stale = createInviteToken({ teamId, email: member, role: 'member', ttlMs: -1000 });
+    await createTeamInvite({
+      teamId, email: member, role: 'member', tokenHash: hashInviteToken(stale),
+      createdByEmail: owner, expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const expired = await joinRoute(
+      auth(memberPair.plaintextKey, 'http://localhost/api/teams/join', { token: stale })
+    );
+    expect(expired.status).toBe(400);
+
+    // Tampered role (member→admin) breaks the signature → 400, never privesc.
+    const minted = await inviteRoute(
+      auth(ownerPair.plaintextKey, `http://localhost/api/teams/${teamId}/invites`, { email: member }),
+      { params: { teamId: String(teamId) } }
+    );
+    const { invite_token } = await minted.json();
+    const [payloadB64] = String(invite_token).split('.');
+    const payload = JSON.parse(Buffer.from(payloadB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString());
+    payload.role = 'admin';
+    const forged = `${Buffer.from(JSON.stringify(payload)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}.${String(invite_token).split('.')[1]}`;
+    const forgedRes = await joinRoute(
+      auth(memberPair.plaintextKey, 'http://localhost/api/teams/join', { token: forged })
+    );
+    expect(forgedRes.status).toBe(400);
   });
 });
 

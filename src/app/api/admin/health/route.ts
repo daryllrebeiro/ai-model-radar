@@ -4,6 +4,7 @@ import { isPostgres } from '../../../../lib/db/client';
 import { secretsEqual } from '../../../../lib/secrets';
 import { logAuthDenied } from '../../../../lib/api-auth';
 import { getGitHubRateLimitStatus, getGitHubPollIntervalMinutes } from '../../../../lib/ingestion/github-labs';
+import { breakerStates } from '../../../../lib/ingestion/circuit';
 import { isBillingEnabled } from '../../../../lib/feature-flags';
 
 export const dynamic = 'force-dynamic';
@@ -62,7 +63,15 @@ export async function GET(request: NextRequest) {
       rateLimit: githubRateLimit,
     };
 
-    const isHealthy = !runs.slice(0, 3).some((r) => r.status === 'failed');
+    // P2 audit: a persistently-open source breaker must be visible here,
+    // not a silent indefinite stall. Breaker-open ingestion failures also
+    // land in ingestion_runs as status=failed (no synthetic fallback).
+    const breakers = breakerStates();
+    const openBreakers = Object.entries(breakers)
+      .filter(([, b]) => b.state === 'open')
+      .map(([source]) => source);
+
+    const isHealthy = !runs.slice(0, 3).some((r) => r.status === 'failed') && openBreakers.length === 0;
 
     return NextResponse.json({
       status: isHealthy ? 'healthy' : 'degraded',
@@ -76,6 +85,8 @@ export async function GET(request: NextRequest) {
         lastPolledAt: stats.lastPolledAt,
       },
       sources: sourceStatus,
+      breakers,
+      openBreakers,
       recentRuns: runs,
     });
   } catch {

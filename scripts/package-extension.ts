@@ -8,18 +8,23 @@ import { execSync } from 'child_process';
  * Requires `zip` on PATH (standard on CI runners; on Windows use
  * `Compress-Archive` on the same directories instead).
  */
-function checkManifest() {
+/** Exported for tests: refuses over-broad manifests before any packaging. */
+export function checkManifest(rootDir = process.cwd()): { matches: number } {
   const manifest = JSON.parse(
-    fs.readFileSync(path.join(process.cwd(), 'extensions', 'browser', 'manifest.json'), 'utf-8')
+    fs.readFileSync(path.join(rootDir, 'extensions', 'browser', 'manifest.json'), 'utf-8')
   );
   const matches: string[] = manifest.content_scripts?.[0]?.matches || [];
+  if (matches.length === 0) {
+    throw new Error('Refusing to package: manifest has no content-script matches.');
+  }
   if (matches.some((m) => m.includes('<all_urls>'))) {
     throw new Error('Refusing to package: manifest contains <all_urls>.');
   }
-  if (!fs.existsSync(path.join(process.cwd(), 'extensions', 'browser', 'PRIVACY.md'))) {
+  if (!fs.existsSync(path.join(rootDir, 'extensions', 'browser', 'PRIVACY.md'))) {
     throw new Error('Refusing to package: extensions/browser/PRIVACY.md missing.');
   }
   console.log(`Browser manifest OK (${matches.length} match patterns, no <all_urls>).`);
+  return { matches: matches.length };
 }
 
 function main() {
@@ -44,4 +49,7 @@ function main() {
   console.log('Packaged: dist/ai-model-radar-browser.zip, dist/ai-model-radar-vscode.zip');
 }
 
-main();
+// Only execute directly when run as CLI script (import-safe for tests).
+if (require.main === module) {
+  main();
+}

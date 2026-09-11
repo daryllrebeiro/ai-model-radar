@@ -304,15 +304,18 @@ export function detectMarketSignals(
   const latestReaddedAt = new Map<string, string>();
   for (const e of events) {
     const t = new Date(e.detected_at).getTime();
+    // Coerce: PG mappers historically leaked Date objects where the row
+    // types declare ISO strings (audit: digest 500 on MODEL_EOL path).
+    const at = typeof e.detected_at === 'string' ? e.detected_at : new Date(e.detected_at).toISOString();
     if (e.event_type === 'MODEL_REMOVED') {
       const prev = latestRemovedAt.get(e.model_id);
       if (!prev || t > new Date(prev).getTime()) {
-        latestRemovedAt.set(e.model_id, e.detected_at);
+        latestRemovedAt.set(e.model_id, at);
       }
     } else if (e.event_type === 'NEW_MODEL') {
       const prev = latestReaddedAt.get(e.model_id);
       if (!prev || t > new Date(prev).getTime()) {
-        latestReaddedAt.set(e.model_id, e.detected_at);
+        latestReaddedAt.set(e.model_id, at);
       }
     }
   }
