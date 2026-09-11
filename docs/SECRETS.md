@@ -23,6 +23,9 @@ This document maintains the complete inventory of operational secrets, third-par
 | `EXPORT_CONNECTOR_KEY` | Security & Integrations | **YES if export connectors store tokens** | Key-encrypting key (SHA-256 → AES-256-GCM) for third-party connector tokens in `export_connectors.secret`. | Held in the deployment secret store ONLY — never in the database, backups, or logs. Readable solely by the app runtime (decrypts at delivery time). | 90 Days (see rotation below) |
 | `ROUTING_UPSTREAM_KEY` | Routing Pilot (R10) | **YES if routing pilot enabled** | Bearer key for the upstream OpenAI-compatible endpoint proxied by `/api/v1/chat/completions`. | Outbound forwarding only. Without it the gateway answers 503. | 90 Days |
 | `ROUTING_ENABLED` / `ROUTING_PILOT_ALLOWLIST` | Routing Pilot (R10) | Pilot control plane (not secrets, but access-critical) | Kill switch + operator allowlist (comma-separated emails) gating the routing gateway alongside per-user opt-in rows. | Changing either takes effect without a deploy being strictly required (env reload). | Review membership on every pilot change |
+| `PROBE_OPENAI_KEY` | Active Probing (S4+S5) | **YES if drift/latency cycles enabled** | Dedicated generation key for canary-drift + latency cycles (OpenAI subset only). | Low-privilege, budget-capped (spend alert + hard cap at provider). Never reused for app traffic or routing. | 90 Days |
+| `PROBE_ANTHROPIC_KEY` | Active Probing (S4+S5) | **YES if drift/latency cycles enabled** | Dedicated generation key for canary-drift + latency cycles (Anthropic subset only). | Low-privilege, budget-capped (spend alert + hard cap at provider). Never reused for app traffic or routing. | 90 Days |
+| `ACTIVE_PROBE_BUDGET_CALLS` | Active Probing (S4+S5) | Optional (defaults to 30/run) | Hard cap override for paid generation calls per cycle. | Cycle aborts new calls past the cap; already-made calls are kept. | Review on cadence change |
 
 ---
 
