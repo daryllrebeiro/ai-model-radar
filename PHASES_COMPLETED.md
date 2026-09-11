@@ -112,6 +112,31 @@ parallel tests/coverage, reliability (SLO watch, deadlines, DLQ).
 - k6: thresholds (p95<200ms, errors<1%) already fail the nightly run, which
   IS the paging path via notifications — kept as-is deliberately.
 
+## Phase 3 — Next-Generation Feature Expansion ✅ COMPLETE (scoped)
+Shipped the roadmap's Low/Med items with tests; High items with open
+strategic/audit prerequisites are explicitly deferred below (not silently dropped).
+- Anomaly alerts: `src/lib/anomaly.ts` (price_churn / deep_cut / free_flurry,
+  event-cited, no confidence scores) surfaced as a separate `anomalies` key on
+  `GET /api/v1/signals` — existing signal consumers unaffected.
+- Team invites v2: HMAC-signed expiring tokens (`src/lib/team-invites.ts`,
+  timing-safe verify, non-transferable to session email), admin-mint and
+  owner-only admin grants mirroring the members route. No new table.
+- Public API quotas: `GET /api/v1/quotas` self-serve tier limits + gated
+  feature list (durable per-window counters stay Redis-gated future work).
+- Usage metering: `src/lib/metering.ts` pure rollup (routing attempts +
+  digest deliveries → billable units); no live Stripe calls.
+- Source breakers: `src/lib/ingestion/circuit.ts` (3-strikes/5min cooldown,
+  half-open probe) wired into the OpenRouter fetch path — the consensus-
+  pricing prerequisite for per-source isolation.
+- Extension store kit: `extensions/browser/PRIVACY.md` (review answers),
+  `extensions/STORE_LISTING.md`, `npm run ext:package` (manifest
+  `<all_urls>` refusal gate + standalone vscode typecheck when available).
+- Coverage: `tests/p3-features.test.ts` (8 tests) green both backends.
+- Explicitly deferred with reasons: OAuth billing connections (needs its own
+  token-storage/scope/revocation audit per the R5 spec — CSV path stands);
+  R10 general availability (needs the ADR-010 amendment vote: sustained bar
+  evidence, competition positioning, ToS/support updates — pilot-only holds).
+
 ## Post-Phase 6 hardening (whole-roadmap Definition of Done)
 - Deploy surface (`vercel.json`): `/api/cron/poll` hourly, `/api/cron/probes` hourly (:15),
   `/api/cron/digest` daily 07:00 UTC + `?timeframe=weekly` Mondays 08:00 UTC.

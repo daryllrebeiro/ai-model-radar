@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "test:parallel": "vitest run --fileParallelism",
     "test:coverage": "vitest run --coverage",
+    "ext:package": "tsx scripts/package-extension.ts",
     "ingest:poll": "tsx scripts/poll.ts",
     "seed:mock": "tsx scripts/seed.ts",
     "db:init": "tsx scripts/migrate.ts",

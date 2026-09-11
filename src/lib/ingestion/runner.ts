@@ -1,4 +1,5 @@
 import { fetchOpenRouterModels, normalizeOpenRouterModel } from './openrouter';
+import { isSourceAvailable, recordSourceSuccess, recordSourceFailure } from './circuit';
 import { computeModelDiffs } from './diff';
 import {
   getLatestSnapshotsMap,
@@ -63,9 +64,20 @@ export async function runIngestionCycle(options: {
       normalizedModels = options.customModels;
       runLogger.info('Using custom model fixture', { count: normalizedModels.length });
     } else {
+      // P3 per-source breaker: skip a repeatedly failing source for one
+      // cooldown instead of stalling the poll (consensus-pricing prerequisite).
+      if (!isSourceAvailable('openrouter')) {
+        throw new Error('OpenRouter source breaker is open — skipping fetch until cooldown elapses.');
+      }
       runLogger.info('Fetching live models from OpenRouter API');
-      const rawModels = await fetchOpenRouterModels();
-      normalizedModels = rawModels.map((raw) => normalizeOpenRouterModel(raw, timestamp));
+      try {
+        const rawModels = await fetchOpenRouterModels();
+        normalizedModels = rawModels.map((raw) => normalizeOpenRouterModel(raw, timestamp));
+        recordSourceSuccess('openrouter');
+      } catch (fetchErr: any) {
+        recordSourceFailure('openrouter', fetchErr?.message || String(fetchErr));
+        throw fetchErr;
+      }
       runLogger.info('Normalized models received', { count: normalizedModels.length });
     }
 

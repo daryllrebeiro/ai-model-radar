@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { getEvents } from '@/lib/db/queries';
 import { getCachedSnapshotsMap } from '@/lib/catalog-cache';
 import { detectMarketSignals } from '@/lib/signals';
+import { detectSpendAnomalies } from '@/lib/anomaly';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
 
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
   const snapshots = Array.from(snapshotsMap.values());
   const allSignals = detectMarketSignals(snapshots, eventsRes.events);
   const sorted = [...allSignals].sort((a, b) => (b.strength || 0) - (a.strength || 0));
+  // P3 anomaly alerts: evidence-based shapes over the same stream, separate
+  // key so existing signal consumers are unaffected.
+  const anomalies = detectSpendAnomalies(eventsRes.events);
 
   const bySeverity = {
     high: allSignals.filter((s) => s.severity === 'high').length,
@@ -50,8 +54,10 @@ export async function GET(request: NextRequest) {
         total: allSignals.length,
         by_severity: bySeverity,
         top_strength: sorted[0]?.strength || 0,
+        anomalies: anomalies.length,
       },
       signals: sorted.slice(0, limit),
+      anomalies: anomalies.slice(0, limit),
     },
     auth.rateLimitHeaders
   );
