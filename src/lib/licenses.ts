@@ -17,7 +17,7 @@ export const RAW_LICENSE_DATA: ModelLicenseRecord[] = [
     commercial_use_allowed: true,
     commercial_use_note: 'Via paid API under OpenAI terms; weights not distributable.',
     attribution_required: false,
-    verified_date: '2024-11-20',
+    verified_date: '2026-09-10',
     source_name: 'OpenAI Evaluations',
     source_url: 'https://openai.com/index/hello-gpt-4o/',
   },
@@ -30,7 +30,7 @@ export const RAW_LICENSE_DATA: ModelLicenseRecord[] = [
     commercial_use_allowed: true,
     commercial_use_note: 'Via paid API under Anthropic terms; weights not distributable.',
     attribution_required: false,
-    verified_date: '2025-02-24',
+    verified_date: '2026-09-10',
     source_name: 'Anthropic Official Release',
     source_url: 'https://www.anthropic.com/news/claude-3-7-sonnet',
   },
@@ -43,7 +43,7 @@ export const RAW_LICENSE_DATA: ModelLicenseRecord[] = [
     commercial_use_allowed: true,
     commercial_use_note: 'Repo states MIT for code; model weights permit commercial use and distillation. Verify current repo terms.',
     attribution_required: true,
-    verified_date: '2025-01-20',
+    verified_date: '2026-09-10',
     source_name: 'DeepSeek-R1 Technical Report',
     source_url: 'https://github.com/deepseek-ai/DeepSeek-R1',
   },
@@ -56,7 +56,7 @@ export const RAW_LICENSE_DATA: ModelLicenseRecord[] = [
     commercial_use_allowed: true,
     commercial_use_note: 'Verify current repo terms before shipping.',
     attribution_required: true,
-    verified_date: '2024-12-26',
+    verified_date: '2026-09-10',
     source_name: 'DeepSeek-V3 Report',
     source_url: 'https://github.com/deepseek-ai/DeepSeek-V3',
   },
@@ -69,9 +69,9 @@ export const RAW_LICENSE_DATA: ModelLicenseRecord[] = [
     commercial_use_allowed: true,
     commercial_use_note: 'Commercial use allowed subject to Llama license terms (incl. monthly-active-user threshold for large services).',
     attribution_required: true,
-    verified_date: '2024-12-06',
-    source_name: 'Meta AI Blog',
-    source_url: 'https://ai.meta.com/blog/llama-3-3/',
+    verified_date: '2026-09-10',
+    source_name: 'Llama 3.3 Community License',
+    source_url: 'https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/LICENSE',
   },
   {
     model_id: 'qwen/qwen-2.5-72b-instruct',
@@ -82,7 +82,7 @@ export const RAW_LICENSE_DATA: ModelLicenseRecord[] = [
     commercial_use_allowed: null,
     commercial_use_note: 'Large Qwen releases historically carry custom terms; confirm the exact license file for this checkpoint.',
     attribution_required: null,
-    verified_date: '2024-09-19',
+    verified_date: '2026-09-10',
     source_name: 'Qwen Blog',
     source_url: 'https://qwenlm.github.io/blog/qwen2.5/',
   },
@@ -95,9 +95,9 @@ export const RAW_LICENSE_DATA: ModelLicenseRecord[] = [
     commercial_use_allowed: true,
     commercial_use_note: 'Via paid API under Google terms; weights not distributable.',
     attribution_required: false,
-    verified_date: '2025-02-05',
-    source_name: 'Google Developers Blog',
-    source_url: 'https://blog.google/technology/developers/gemini-2-0-flash-thinking/',
+    verified_date: '2026-09-10',
+    source_name: 'Gemini API Terms',
+    source_url: 'https://ai.google.dev/gemini-api/terms',
   },
 ];
 
@@ -117,3 +117,4 @@ export function findLicenseForModel(modelId: string): ModelLicenseRecord | null 
 export function filterModelIdsByCommercialUse(modelIds: string[]): string[] {
   return modelIds.filter((id) => findLicenseForModel(id)?.commercial_use_allowed === true);
 }
+

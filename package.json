@@ -17,6 +17,8 @@
     "seed:mock": "tsx scripts/seed.ts",
     "db:init": "tsx scripts/migrate.ts",
     "db:migrate:status": "tsx scripts/migrate.ts status",
+    "db:migrate:rebaseline": "tsx scripts/migrate.ts rebaseline",
+    "verify:sources": "tsx scripts/verify-sources.ts",
     "db:prune": "tsx scripts/prune-raw-json.ts",
     "db:backup": "tsx scripts/backup-db.ts",
     "db:restore": "tsx scripts/restore-db.ts",

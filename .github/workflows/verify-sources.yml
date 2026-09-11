@@ -1,0 +1,29 @@
+name: Nightly Curated-Source Verification
+
+on:
+  schedule:
+    # Run daily at 04:00 UTC (bot-friendly hour for docs sites)
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  verify-sources:
+    name: Verify benchmark/capability/license sources
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify curated sources
+        run: npm run verify:sources
+        env:
+          SOURCE_MAX_AGE_DAYS: 365

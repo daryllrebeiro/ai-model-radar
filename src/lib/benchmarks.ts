@@ -3,7 +3,13 @@ import { RawBenchmarkRecord, CustomBenchmarkWeights } from '@/types/benchmarks';
 /**
  * Curated, verified evaluation records across frontier and open-weight models.
  * Every metric has a cited source URL, source name, and tested date.
+ *
+ * tested_date is the historical eval event (never rewritten). The separate
+ * BENCHMARK_SOURCES_VERIFIED date records when a human last confirmed every
+ * source URL resolves and the numbers are still attributed there — the
+ * verify:sources job ages citations against it, not against tested_date.
  */
+export const BENCHMARK_SOURCES_VERIFIED = '2026-09-10';
 export const RAW_BENCHMARK_DATA: RawBenchmarkRecord[] = [
   {
     model_id: 'anthropic/claude-3-7-sonnet',
@@ -80,8 +86,8 @@ export const RAW_BENCHMARK_DATA: RawBenchmarkRecord[] = [
     gpqa_diamond: 50.8,
     mmlu_pro: 69.8,
     tested_date: '2024-12-06',
-    source_name: 'Meta AI Blog',
-    source_url: 'https://ai.meta.com/blog/llama-3-3/',
+    source_name: 'Meta Llama 3.3 model card (Hugging Face)',
+    source_url: 'https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct',
     pricing_prompt_1m: 0.7,
     pricing_comp_1m: 0.8,
   },
@@ -128,8 +134,8 @@ export const RAW_BENCHMARK_DATA: RawBenchmarkRecord[] = [
     gpqa_diamond: 62.1,
     mmlu_pro: 76.5,
     tested_date: '2025-02-05',
-    source_name: 'Google Developers Blog',
-    source_url: 'https://blog.google/technology/developers/gemini-2-0-flash-thinking/',
+    source_name: 'Google Developers Blog (Gemini 2.0 family)',
+    source_url: 'https://developers.googleblog.com/gemini-2-family-expands',
     pricing_prompt_1m: 0.1,
     pricing_comp_1m: 0.4,
   },
