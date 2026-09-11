@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import {
   insertSnapshots,
@@ -13,8 +13,11 @@ import { ModelSnapshot } from '../src/types/models';
 import { ModelEvent } from '../src/types/events';
 import { GET as historyRoute } from '../src/app/api/v1/models/history/[...id]/route';
 import { GET as detailRoute } from '../src/app/api/v1/models/[...id]/route';
+import { ns, resetLocalBackend } from './helpers';
 
-const MODEL_ID = 'test/price-history-model';
+// P1-2: per-run namespace — no other suite can share this id, so positional
+// event assertions are sound again (not tolerant of residue).
+const MODEL_ID = ns('price-history')('model');
 
 function makeSnapshot(prompt: number, completion: number, daysAgo: number): ModelSnapshot {
   return {
@@ -33,6 +36,10 @@ function makeSnapshot(prompt: number, completion: number, daysAgo: number): Mode
 
 afterEach(() => {
   delete process.env.FEATURE_ENFORCEMENT;
+});
+
+beforeEach(async () => {
+  await resetLocalBackend();
 });
 
 describe('Phase 2.1: Price History Charts', () => {
@@ -76,12 +83,11 @@ describe('Phase 2.1: Price History Charts', () => {
     expect([...times].sort((a, b) => a - b)).toEqual(times);
 
     expect(result!.events.length).toBeGreaterThanOrEqual(1);
-    // Events newest-first; the local backend is shared across test files with
-    // no reset, so other suites' events for this model id may interleave —
-    // assert ordering + presence of our PRICE_CHANGE, not a positional index.
+    // P1-2: backend is reset + id namespaced per run, so the suite's own
+    // event is positionally first again (strict assertion restored).
     const times_e = result!.events.map((e) => new Date(e.detected_at).getTime());
     expect([...times_e].sort((a, b) => b - a)).toEqual(times_e);
-    expect(result!.events.some((e) => e.event_type === 'PRICE_CHANGE')).toBe(true);
+    expect(result!.events[0].event_type).toBe('PRICE_CHANGE');
     expect(result!.current).not.toBeNull();
   });
 
@@ -116,6 +122,7 @@ describe('Phase 2.1: History API Endpoint', () => {
   });
 
   it('6. History route rejects invalid range params gracefully with 200 (defaults to all)', async () => {
+    await insertSnapshots([makeSnapshot(0.000004, 0.000012, 3)]);
     const email = `hist_key_${Date.now()}@test.com`;
     const user = await createOrGetUser({ email, tier: 'pro' });
     const { plaintextKey, keyRecord } = generateApiKey(user.email, 'production');
@@ -167,6 +174,7 @@ describe('Phase 2.1: History API Endpoint', () => {
 
   it('8. Enforcement ON: free user blocked (403), pro user allowed (200)', async () => {
     process.env.FEATURE_ENFORCEMENT = 'true';
+    await insertSnapshots([makeSnapshot(0.000004, 0.000012, 3)]);
 
     const freeUser = await createOrGetUser({ email: `hist_free_${Date.now()}@test.com`, tier: 'free' });
     const freeKey = generateApiKey(freeUser.email, 'free');

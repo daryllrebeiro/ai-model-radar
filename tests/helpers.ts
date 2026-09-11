@@ -11,6 +11,32 @@ export function uniqueEmail(prefix: string): string {
   return `${prefix}.${Date.now()}.${Math.floor(Math.random() * 1e6)}@test.dev`;
 }
 
+/**
+ * P1-2 — per-file model-id namespace. Suites that share the mutable local
+ * JSON backend MUST scope ids through ns() so ingestion tests in one file
+ * can never pollute reader tests in another (the price-history
+ * MODEL_REMOVED flake). Usage: `const MODEL_ID = ns('price-history')('model')`.
+ */
+export function ns(file: string): (id: string) => string {
+  const run = Date.now().toString(36);
+  return (id: string) => `test/${file}/${run}/${id}`;
+}
+
+/**
+ * P1-2 — clears snapshot/event state in the LOCAL backend only. Postgres
+ * mode is untouched (shared tables there are test-transactional where used;
+ * never bulk-delete a shared database from a helper). Call in beforeEach
+ * for suites asserting positional event/snapshot identity.
+ */
+export async function resetLocalBackend(): Promise<void> {
+  const { isPostgres, getLocalState, saveLocalState } = await import('../src/lib/db/client');
+  if (isPostgres()) return;
+  const state = getLocalState();
+  state.snapshots = [];
+  state.events = [];
+  saveLocalState(state);
+}
+
 /** Seeds user → team → personal + team budget rules; returns all handles. Pass an explicit email for deterministic cross-run seeding (e.g. parity tests). */
 export async function seedTeamWithGovernance(prefix = 'hx', email?: string) {
   email = email || uniqueEmail(`${prefix}.owner`);
