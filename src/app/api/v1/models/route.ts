@@ -2,8 +2,7 @@ import { NextRequest } from 'next/server';
 import { getModelCurrentList } from '@/lib/db/queries';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 import { modelsQuerySchema } from '@/lib/validation/api-schemas';
-import { findCapabilityForModel } from '@/lib/capabilities';
-import { findLicenseForModel } from '@/lib/licenses';
+import { applyAttributeFilters, enrichModels, hasAttributeFilters } from '@/lib/catalog-enrichment';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,12 +31,13 @@ export async function GET(request: NextRequest) {
   }
 
   const { q, provider, free, sortBy, limit, offset } = parsed.data;
-  const toolCalling = (parsed.data as any).tool_calling as boolean | undefined;
-  const vision = (parsed.data as any).vision as boolean | undefined;
-  const commercial = (parsed.data as any).commercial as boolean | undefined;
-  const hasAttrFilter = toolCalling !== undefined || vision !== undefined || commercial !== undefined;
+  const filters = {
+    toolCalling: (parsed.data as any).tool_calling as boolean | undefined,
+    vision: (parsed.data as any).vision as boolean | undefined,
+    commercial: (parsed.data as any).commercial as boolean | undefined,
+  };
+  const hasAttrFilter = hasAttributeFilters(filters);
 
-  // Attribute filters join sourced static datasets (R3/R4) — no DB column.
   // When present, read a bounded window (500 = catalog cap) then filter +
   // paginate in Node so `total` reflects the filtered set.
   const data = await getModelCurrentList({
@@ -49,23 +49,11 @@ export async function GET(request: NextRequest) {
     offset: hasAttrFilter ? 0 : offset,
   });
 
-  let models = data.models;
-  if (hasAttrFilter) {
-    models = models.filter((m) => {
-      if (toolCalling !== undefined && findCapabilityForModel(m.model_id)?.tool_calling !== toolCalling) return false;
-      if (vision !== undefined && findCapabilityForModel(m.model_id)?.vision !== vision) return false;
-      if (commercial !== undefined && (findLicenseForModel(m.model_id)?.commercial_use_allowed === true) !== commercial) return false;
-      return true;
-    });
-  }
+  const models = applyAttributeFilters(data.models, filters);
   const total = hasAttrFilter ? models.length : data.total;
   const page = hasAttrFilter ? models.slice(offset, offset + limit) : models;
 
-  const enriched = page.map((m) => ({
-    ...m,
-    capabilities: findCapabilityForModel(m.model_id),
-    license: findLicenseForModel(m.model_id),
-  }));
+  const enriched = enrichModels(page);
 
   return apiJsonResponse(
     {
