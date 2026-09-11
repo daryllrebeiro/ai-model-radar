@@ -4,7 +4,7 @@
  * Split out of queries.ts (god-module remediation) - same logic, new home.
  */
 import { ModelSnapshot } from '@/types/models';
-import { ModelEvent } from '@/types/events';
+import { ModelEvent, isValidAnnouncementNewValue } from '@/types/events';
 import { isPostgres, getPgPool, getLocalState, saveLocalState } from './client';
 import { bulkInsert } from './_shared';
 
@@ -58,10 +58,20 @@ export async function insertSnapshots(snapshots: ModelSnapshot[]): Promise<void>
 }
 
 /**
- * Bulk insert model events
+ * Bulk insert model events. P1-5: enforces the EVENT_NEW_VALUE_SCHEMAS
+ * registry — DEPRECATION_ANNOUNCED rows must carry a real https source_url
+ * and a parseable announced_at, so inferred/forum dates can never enter
+ * history through any writer (poll worker, tests, or future sources).
  */
 export async function insertEvents(events: ModelEvent[]): Promise<void> {
   if (events.length === 0) return;
+  for (const e of events) {
+    if (e.event_type === 'DEPRECATION_ANNOUNCED' && !isValidAnnouncementNewValue(e.new_value)) {
+      throw new Error(
+        `insertEvents rejected DEPRECATION_ANNOUNCED for ${e.model_id}: new_value must be {source_url: https-url, announced_at: ISO} (EVENT_NEW_VALUE_SCHEMAS).`
+      );
+    }
+  }
 
   if (isPostgres()) {
     const pool = getPgPool();
@@ -105,7 +115,7 @@ export async function insertEvents(events: ModelEvent[]): Promise<void> {
 
 export interface IngestionRunRecord {
   id?: number;
-  source: 'openrouter' | 'github' | 'huggingface';
+  source: 'openrouter' | 'github' | 'huggingface' | 'changelog';
   started_at: string;
   finished_at?: string;
   status: 'success' | 'partial' | 'failed';
