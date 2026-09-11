@@ -1,5 +1,6 @@
 import React from 'react';
 import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
+import { RAW_EMBEDDING_BENCHMARKS } from '@/lib/embeddings';
 import { BenchmarkMatrix } from '@/components/benchmarks/benchmark-matrix';
 import { Award, Info } from 'lucide-react';
 
@@ -34,6 +35,46 @@ export default function BenchmarksPage() {
       {/* Benchmark Matrix Table */}
       <section>
         <BenchmarkMatrix initialRecords={RAW_BENCHMARK_DATA} />
+      </section>
+
+      {/* S9: Embedding MTEB subtasks — individual scores, no composite */}
+      <section className="space-y-3">
+        <h2 className="text-xl font-bold text-white">Embedding benchmarks (MTEB subtasks)</h2>
+        <p className="text-xs text-gray-400 max-w-2xl">
+          Sourced MTEB subtask numbers shown individually. No synthesized single embedding quality score.
+        </p>
+        <div className="overflow-x-auto rounded-xl border border-gray-800">
+          <table className="min-w-full text-xs font-mono">
+            <thead>
+              <tr className="bg-gray-900/60 text-gray-400">
+                <th className="text-left px-3 py-2">Model</th>
+                <th className="text-right px-3 py-2">Retrieval</th>
+                <th className="text-right px-3 py-2">Classification</th>
+                <th className="text-right px-3 py-2">Clustering</th>
+                <th className="text-right px-3 py-2">Reranking</th>
+                <th className="text-right px-3 py-2">STS</th>
+                <th className="text-left px-3 py-2">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {RAW_EMBEDDING_BENCHMARKS.map((r) => (
+                <tr key={r.model_id} className="border-t border-gray-800/60 text-gray-200">
+                  <td className="px-3 py-2">{r.model_id}</td>
+                  <td className="text-right px-3 py-2">{r.retrieval ?? '—'}</td>
+                  <td className="text-right px-3 py-2">{r.classification ?? '—'}</td>
+                  <td className="text-right px-3 py-2">{r.clustering ?? '—'}</td>
+                  <td className="text-right px-3 py-2">{r.reranking ?? '—'}</td>
+                  <td className="text-right px-3 py-2">{r.sts ?? '—'}</td>
+                  <td className="px-3 py-2">
+                    <a href={r.source_url} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">
+                      {r.source_name} · {r.tested_date}
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );
