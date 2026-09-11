@@ -1,347 +1,319 @@
 # AI Model Radar - Architectural Review & Strategic Roadmap
 
-> Review scope: `main` at `3815e51` — 9 S-round commits on top of `739cdd3`
-> (`src/lib` — 70+ modules, `src/app/api` — 80+ routes, `migrations/`
-> 005–026, `tests/` — 98 files, `src/lib/db/schema.sql`, `extensions/`,
-> `docs/` incl. `docs/S10_LIMITATIONS.md`, plus `AUDIT_S_FEATURES.md`).
-> Every claim is anchored to a file and line number. Grades reflect
+> Review scope: `main` at `fac1ba6` — 12 phase commits on top of `3815e51`
+> (`src/lib` — 75+ modules, `src/app/api` — 85+ routes, `migrations/`
+> 005–028, `tests/` — 108 files, 32 tables via manifest, `docs/` incl.
+> ADRs 012/013, audit packages, threshold + promotion records). Every claim
+> is anchored to a file and line number. Grades reflect
 > production-readiness, not effort. This review supersedes all earlier
-> drafts: since the last review the team shipped S1–S9 across 7 feature
-> commits, ran a dedicated adversarial audit of the new surface
-> (`AUDIT_S_FEATURES.md`, 3 findings fixed live), and pushed everything
-> green. Verified live this session, local-backend mode: **12/12 files,
-> 68/68 tests green across the S-suites + audit suite + neighbors
-> (r3-r4, source-verify, price-history, session-rate-limit); `tsc` clean
-> from the prior session with no code changes since; working tree clean.**
+> drafts: since the last review the team executed the entire next-phases
+> plan (P1-1→P1-7, P2-1→P2-5, P3 queue/sort/pilot/docs/status) across 12
+> sequential commits, fixed a build-breaking route export live, and closed
+> with a fully green tree. Verified live this session: **full local suite
+> 107 files / 600 tests pass (0 failures), `tsc` clean, eslint 0 errors,
+> `next build` green, real Postgres (`radar-pg`) migrations 027+028 applied
+> with clean status and 31/31 targeted tests green, working tree clean.**
 
 ## 1. Executive Summary & Health Assessment
 
-**One-paragraph verdict:** the audit round just completed is the strongest
-evidence this codebaseFOR is healthy: adversarial review of the 9 shipped
-S-items found 3 real issues (5 unthrottled routes, missing pre-parse body
-guards, probe cycle abort on single-provider failure), all fixed live with
-regression pins, and the full S-surface is 68/68 green with `tsc` clean and
-a clean tree on `main`. The event-sourced core survived a second 10-feature
-expansion intact — S1 added an event type, not a side table — and the new
-development remains cost surface, not code shape: S4+S5 is still the first
-paid-call infrastructure with only a constant as guardrail, and test-backend
-isolation is still an assertion relaxation rather than a structural fix.
-Nothing needs a rewrite; the highest-ROI work is the probe spend ledger,
-test isolation, and the two reviews code cannot close (S2 permission, S10
-strategy).
+**One-paragraph verdict:** this is now a post-execution review, not a
+pre-execution plan — every P0 and P1 from the last two reviews is either
+landed or reduced to a human signature. The ledger exists
+(`probe_spend_ledger`, migration 027, manifest table #31), the kill switch
+defaults OFF, the scheduler refuses to spend without keys, test isolation
+is contractual (`ns()` + `resetLocalBackend()` + startup reset + CI
+hygiene gate), the S1 worker polls weekly, all 5 public S-routes share one
+guard wrapper, and the drift queue stores evidence for humans only. What
+remains is either data-accumulation (0/10 deprecation pairs, 0 probe
+cycles) or decisions only people can make (S2 independent sign-off, S10
+vote, ADR-013 ratification). The highest-ROI work is now operational, not
+architectural: provision the first budget-capped probe key, run the first
+live cycle, and hold the second threshold review.
 
-**Live findings fixed since the last review (the audit working as designed):**
-1. **H1 (High): 5 public S-routes had zero rate limiting** —
-   `GET /api/v1/deprecations` (5000-row read + Node pairing per hit),
-   `GET /api/v1/active-probe`, and the finetune/optimizer/codegen POSTs.
-   Fixed with `validatePublicApiRequest` on all five
-   (`src/app/api/v1/deprecations/route.ts:15-18`,
-   `src/app/api/v1/active-probe/route.ts`,
-   `src/app/api/v1/finetune-estimate/route.ts`,
-   `src/app/api/v1/prompt-optimize/route.ts`,
-   `src/app/api/v1/migrate-code/route.ts`), same anonymous-within-budget
-   pattern as `v1/models`.
-2. **H2 (Medium): no pre-parse body guards** — compute routes parsed full
-   JSON synchronously; org-scan's schema admitted ~100MB. Fixed with
-   `assertPayloadSize` before `request.json()` (256KB × 3, 4MB org-scan).
-3. **H3 (Medium): one throwing provider aborted the whole paid cycle.**
-   Fixed with per-call try/catch + `errors` counter in
-   `src/lib/active-probe.ts` — errored calls emit no sample and no diff, so
-   outage can never present as drift.
-4. Earlier (prior session): stale `source-verify` dataset expectation and
-   the price-history shared-state flake — both fixed, both still green.
+**Live findings fixed since the last review:**
+1. **Build-breaking route export.** The new scheduler exported a test
+   helper (`__resetProbeOverlapForTests`) and a generator from a Next.js
+   route module — `next build` rejects non-handler exports. Fixed by moving
+   overlap state to `src/lib/probe-overlap.ts` and `buildProbeGenerateFn`
+   into `src/lib/active-probe.ts`. Lesson recorded: route files export
+   handlers, never helpers.
+2. **Matcher threshold too strict.** The changelog poller's bare-name
+   matcher (≥8 chars) missed real short names (`gpt-4o`). Fixed to ≥5 with
+   a documented false-positive rationale; fixture suite caught it.
+3. **Order-dependent history tests.** The new backend reset exposed tests
+   6/8 in `price-history.test.ts` depending on leaked state — fixed to
+   self-seed, per the ADR-012 rule that each break is treated as a real bug.
 
 ### Overall System Maturity
 
 | Dimension | Grade | Rationale |
 |---|---|---|
-| Architecture | **B+** | Event core + pure engines held through 9 shipped S-items and a hostile audit without a single architectural change — every fix was a guard, not a redesign. `catalog-enrichment.ts` remains the correct single join point. Dragged down by the still-unledgered paid-call surface and enrichment's 6-join growth. |
-| Code Quality | **B+** | Strict TS, `tsc` clean, eslint 0 errors, zod at all 6 S boundaries, 429/413/422 paths all pinned by tests. The audit added the missing cross-cutting guards (throttleniosk + payload caps) the feature round skipped. Offset by `any` warnings (house pattern) and free-form `new_value` blobs on the new event type. |
-| Maintainability | **B** | Domain-per-file held (7 new types + 7 new libs, zero god-module growth); S10 gate recorded as `docs/S10_LIMITATIONS.md`; audit recorded as `AUDIT_S_FEATURES.md` with decision-grade verdicts. Tax: 7 curated static datasets, enrichment's triple-stacked filters, checksum drift risk per migration. |
-| Performance | **B** | Catalog TTL cache + bounded reads intact; S filters apply over a 500-row cap; S1 report caps at 5000 events with Node pairing (fine at current volume). Open: `getLatestSnapshotsMap` full `DISTINCT ON` scan on hot paths; probe cycles have call caps but no time/deadline budget; deprecations read path has no SQL pushdown. |
-| Test Coverage | **A−** | 68/68 green on the S-surface + audit suite + neighbors, zero `vi.mock`, real handlers × real backends, 11-test audit suite pinning every finding. Gaps unchanged: no cross-file isolation (assertion relaxed, isolation open), no E2E, ~200s serial wall-time, no coverage gates. |
+| Architecture | **A−** | First A-range grade: event core intact through 3 expansions, zero new tables that weren't manifest-first (027/028 followed the drill), guards extracted to a wrapper, scheduler gated four-deep, drift queue human-only by construction. Remaining drag: enrichment's 6 joins, single-instance overlap guard (documented, needs DB lease at scale). |
+| Code Quality | **A−** | `tsc` clean, eslint 0 errors, zod at all 9 S boundaries plus 3 cron routes, 429/413/422/409 paths all pinned. Registry-validated event writes close the last "convention without enforcement" gap. Offset by `any` warnings (house pattern) and JSONB `new_value`/`diff_lines` blobs (now registry-documented). |
+| Maintainability | **B+** | Domain-per-file held across 5 new modules + 2 tables; ADRs 012 (decided) / 013 (proposed) + 4 audit/design packages recorded as docs. Tax: 7 curated datasets (now owned, with age budgets), enrichment's stacked filters, checksum surface at 28 migrations. |
+| Performance | **B+** | Pushdown verified + pinned (index already existed — no redundant migration built); latency sort bounded (500-cap window, telemetry map); probe fan-out has per-call timeouts + overlap guard. Open: `getLatestSnapshotsMap` full scans on hot paths; no latency histograms; coverage job added but first full run pending in CI. |
+| Test Coverage | **A−** | 107 files / 600 pass local, 31/31 on real Postgres, zero `vi.mock`, isolation contractual with startup reset + CI committed-file gate. Gaps now narrow: no E2E, serial ~160s wall-time, per-file parallel workers still future work. |
 
 ### Architectural Philosophy
 
 **Core strengths (keep and extend):**
-1. **Guards compose; redesigns weren't needed.** H1/H2/H3 were each fixed
-   with existing house machinery (`validatePublicApiRequest`,
-   `assertPayloadSize`, per-call try/catch) — proof the fail-closed style
-   is load-bearing, not decorative. New code copies it without being told.
-2. **The moat held through a second expansion plus audit.** S1's
-   `DEPRECATION_ANNOUNCED` rides `model_events` + `COMPOUND_EVENT_TYPES`
-   (`src/lib/compound-rules.ts:30-37`); `runConnector()` still has zero
-   non-test callers; the gateway still cannot silently substitute; S6/S8
-   422-instead-of-guess survived adversarial review untouched.
-3. **Engines-first held for all 9 items.** Every S engine is pure and
-   unit-tested without I/O; `runActiveProbeCycle` takes an injected
-   `generateFn`, so the 68-test surface never spends money and never hits
-   network.
-4. **Gates as documents, not lore.** `docs/S10_LIMITATIONS.md` (HELD with
-   decision log), `AUDIT_S_FEATURES.md` (conditional passes with named
-   residuals), disclaimers in-band on every S6/S7/S8/S4+S5 response.
+1. **Execution matches planning.** The next-phases plan (`docs/
+   NEXT_PHASES_IMPLEMENTATION_PLAN.md`) specified files, tests, and DoD
+   per item; all 17 items landed as specified with verification at each
+   step. The plan→build→verify loop is now the team's proven operating
+   rhythm.
+2. **Money has guardrails at every layer.** Constant budget →
+   runtime ledger (`spend-ledger.ts`) → kill switch (default OFF) →
+   scheduler gates (auth, switch, dry-run, key-required, overlap) →
+   per-call timeouts → per-model error attribution → retention with
+   pre-prune rollup snapshots. Six layers between intent and invoice.
+3. **Fail-closed keeps compounding.** Guard wrapper (`route-guards.ts`),
+   registry-validated writes, 401-before-413 ordering on org-scan,
+   no-outage-as-drift, purge endpoint confirming zero retention — each new
+   surface adopted the house style without being told twice.
+4. **Honest states everywhere.** Collecting (0/10 pairs), disabled
+   (kill switch), no-credentials (503, never half-run), HELD (S10),
+   PROPOSED (ADR-013, OAuth) — the product now says what it hasn't done
+   as clearly as what it has.
 
-**Fundamental structural risks:**
-1. **Paid-call surface still has no runtime ledger.** H3 made cycles
-   fail-safe per call, but the budget (`DEFAULT_ACTIVE_PROBE_BUDGET`,
-   `src/types/active-probe.ts:29-35`) is still a constant, not an account:
-   no spend table, no kill switch, no alerting. Status route makes zero
-   paid calls by construction — the scheduler (not yet built) is where
-   money actually moves.
-2. **Test-backend isolation is documented, not fixed.** The price-history
-   assertion now tolerates residue instead of assuming cleanliness. The
-   flake shape (ingestion tests appending rows reader tests can see)
-   persists for all 98 files sharing worker JSON stores.
-3. **Static-dataset sprawl ×7.** `verify:sources` covers 5 datasets, but no
-   named owner per file, no nightly paging, no per-dataset age budgets —
-   and S7 compliance rows carry regulatory stakes the arena scores don't.
+**Fundamental structural risks (all diminished, none zero):**
+1. **Paid cycles are still theoretical.** The full spend pipeline exists
+   but no live cycle has ever run (no keys provisioned). First-cycle
+   unknowns (real token volumes, provider latency tails, ledger growth
+   rate) are unmeasured — run one watched-model cycle and read the ledger.
+2. **Test isolation is contractual, not mechanical.** `ns()` + reset +
+   hygiene gate hold by convention and review checklist; per-file parallel
+   workers with truly isolated backends remain future work (P2-4 residue).
+3. **Dataset curation is owned but unstaffed.** Owners are named, budgets
+   set, paging designed — but no nightly paging runs yet and no human has
+   been paged. The first page proves the system.
 
 ### Primary Bottlenecks
 
-1. **Unmetered paid-call surface.** Code-complete and fail-safe, but
-   finance learns about overruns from the provider invoice, not the product.
-2. **Shared mutable test backend.** Proven failure source; current
-   mitigation is tolerant assertions, not isolation.
-3. **Manual follow-through on shipped cores.** S1 changelog worker,
-   probe scheduler, S2 App manifest/review, org-scan purge endpoint
-   (advertised, unimplemented) — each shipped core awaits its operator.
+1. **Zero production telemetry on new surfaces.** All S success metrics
+   read 0 — features unshipped, no metric sink. The second threshold
+   review cannot happen without the P2-observability sink.
+2. **Human gates queueing.** S2 independent sign-off, S10 vote, ADR-013
+   ratification, OAuth checklist — four decisions needing counterparties
+   outside this session.
+3. **Unmeasured paid-cycle behavior.** Infrastructure complete, empirical
+   data absent — the first live cycle is the highest-information action
+   available.
 
 ## 2. In-Depth Engineering Review
 
 ### Design Patterns & Modularity
-- **Enrichment hub holding at 6 joins + 2 filter families**
-   (`src/lib/catalog-enrichment.ts:12-62`, now with `category`/`embedding`
-   fields and `applyCategoryFilter`). Both models twins share it — no third
-   copy appeared during the S-round. Next split line is visible: extract
-   `queryCatalog()` when the third filter family lands.
-- **S-type/S-lib pairing consistent** across all 7 new pairs; audit added
-   no new modules, only guards inside existing ones — correct layering.
-- **Active probing extends rather than duplicates** (`active-probe.ts`
-   reuses `probe.ts` target/p95/tokens concepts). The drift signal is still
-   deliberately unwired from `signals.ts` — no review queue exists to
-   consume `candidate_for_review`, and wiring it early would create
-   unactionable alerts.
-- **Route-handler shape converged.** All 6 S routes now open with the same
-   two lines (throttle, then size-guard for POSTs) — a de facto middleware
-   pattern worth extracting to a `withPublicGuards()` wrapper on the next
-   route added.
-- **Extensions still outside CI** (unchanged): no compile/publish tripwire.
+- **Guard wrapper eliminated the copy-paste class.** All 5 public S-routes
+   now open through `withPublicGuards()` (`src/lib/route-guards.ts`) —
+   the audit's H1/H2 can never recur as a forgotten two-liner. Org-scan
+   correctly keeps its session variant (different trust model, not an
+   exception to unify away).
+- **Route-module discipline learned the hard way.** The scheduler's
+   helper-export build failure is now a documented rule: route files
+   export handlers + config; all logic lives in lib (overlap in
+   `probe-overlap.ts`, generation in `active-probe.ts`). Add it to the
+   review checklist.
+- **Domain modules added without god-module growth:** `spend-ledger.ts`,
+   `drift-reviews.ts` (both barreled), `route-guards.ts`,
+   `probe-overlap.ts`, `deprecation-changelog.ts` — each single-purpose,
+   each tested without I/O beyond its backend.
+- **Enrichment hub at 6 joins + latency helpers** (`latestP95ByModel`,
+   `sortModelsByLatency`) — still the right home, but the next filter
+   family must trigger the `queryCatalog()` extraction named two reviews ago.
+- **Extensions still outside CI** (unchanged, third review running).
 
 ### Data Architecture & Persistence
-- **Schema: 30 tables via manifest, integrity preserved.** `TABLE_MANIFEST`
-   (`src/lib/db/tables.ts:19-51`) + drift-guard test hold; FK heal chain
-   008→009→012→013 remains the repair model. The S-round added **zero
-   tables** — S1 reused `model_events`, everything else is static or
-   stateless. That restraint is the quarter's best data decision.
-- **Event-type growth disciplined but unregistered.** `DEPRECATION_ANNOUNCED`
-   stores `{source_url, announced_at}` in `new_value` with no schema
-   registry — two JSONB conventions now; validate at `insertEvents` before
-   a third type lands.
-- **New read paths bounded after audit.** Deprecations caps at 5000 events
-   *and* is throttled (H1); optimizer/codegen/finetune bodies capped
-   pre-parse (H2). Org-scan's 500×200KB schema still relies on the 4MB
-   header guard + worker chunking — acceptable, documented in-route.
-- **Dual-backend tax persists.** Enrichment dodges it (in-memory statics);
-   S1's `getEvents`-backed report does not. Local-backend semantics (shared
-   files, no isolation) remain the divergence risk Postgres doesn't share.
-- **Migration hygiene good, standing risk unchanged.** Checksums, `status`,
-   rebaseline tooling all hold; each file is another drift candidate.
+- **Schema: 32 tables, manifest-clean.** 027/028 followed the drill
+   (schema + migration + manifest + local mirror + barrel) and the
+   drift-guard passes unmodified — the 6-touch tax is now a 6-touch
+   checklist the team executes reliably. CI TRUNCATE list updated for the
+   ledger (drift table needs no scheduled cleanup — queue rows are review
+   records, pruned by decision, not time).
+- **Event writes now registry-validated.** `insertEvents` rejects
+   `DEPRECATION_ANNOUNCED` rows without `{source_url: https-url,
+   announced_at: ISO}` (`src/lib/db/ingestion.ts:62-75`) against
+   `EVENT_NEW_VALUE_SCHEMAS` (`src/types/events.ts:29-56`) — inferred
+   dates cannot enter history through any writer, tested.
+- **Read paths verified, not rebuilt.** P2-3 proved the deprecation query
+   was already pushed down with its composite index and pinned it with
+   tests instead of shipping a redundant migration — the review culture
+   now avoids building to look busy.
+- **Retention complete for the new surface.** Ledger rollup-then-prune
+   (90d raw, aggregates survive via reads) wired into the prune cron with
+   pre-prune rollup snapshots; org-scan needs no TTL (nothing persisted);
+   announcements ARE history (no TTL by design).
+- **Dual-backend per ADR-012 (decided).** Isolation contractual via
+   `ns()` + `resetLocalBackend()` + startup worker-file purge + CI
+   committed-file gate. Flake counter armed: 3 escapes in 90 days reopens.
 
 ### Error Handling & Fault Tolerance
-- **Post-audit route matrix is complete:** 400 on bad JSON/shape (zod),
-   401 on org-scan without session (checked before any parse work — pinned),
-   413 on oversized bodies (pinned for 3 routes), 422 with alternatives on
-   unknown pricing/pairs (untouched by audit — already correct), 429 past
-   tier budget on all 5 public S routes (new).
-- **Probe failure semantics now exact:** success → sample + diff; budget
-   exhaustion → `calls_skipped_over_budget`; provider error → `errors`
-   with no sample, no diff, cycle continues. All three pinned.
-- **Remaining gaps (unchanged, ordered):** no per-call timeout/deadline
-   inside the cycle (serial await over ≤30 paid calls); digest R6 hook
-   errors swallowed to warn-log; connector runner has no enforced timeout;
-   R8 pushes serial without an overall deadline.
+- **Scheduler gate order is the exemplar:** 401 (cron secret) →
+   disabled (kill switch) → dry-run (no spend) → 503 without keys →
+   409 on overlap → per-call 15s timeouts → per-model error counts →
+   ledger rows. Each refusal precedes the next spend.
+- **Probe failure semantics exact and pinned:** success → sample + diff;
+   budget → skipped counter; provider error → `errors` +
+   `per_model_errors`, no sample, no diff; cycle continues.
+- **Remaining gaps (narrowed):** single-instance overlap guard (DB lease
+   documented for multi-instance); no overall cycle deadline (per-call
+   timeouts bound the worst case to 30 × 15s); digest R6 hook still
+   swallowed to warn-log; connector runner still unenforced timeout.
 
 ### Observability & Diagnostics
-- **Audit-strengthened trails:** org-scan `org-scan.completed` (org, repo
-   count, matches, actor — no contents); deprecation self-reporting
-   maturity (`total_pairs/min_pairs`); probe `errors` + `calls_skipped`
-   counters per cycle; throttling emits standard `X-RateLimit-*` +
-   `Retry-After` on every S route.
-- **Still missing (highest value first):** probe spend metering (dollars,
-   not milliseconds); S1 pair-accumulation tracking toward the 10-pair
-   gate; S-spec usage-threshold consumption (compliance CTR, estimator
-   completions, latency-sort usage) with no dashboard; request-latency
-   histograms, pool gauges, trace propagation (all unchanged).
+- **New trails this round:** ledger rows per model per cycle; pre-prune
+   rollup snapshots in prune responses; changelog poll completion logs
+   with items/emitted/error counts; drift queue with cycle attribution;
+   `X-RateLimit-*` on all S routes; sunset headers on legacy.
+- **Still missing (now the top bottleneck):** the S-metric event sink
+   (blocks the second threshold review); probe spend dashboard over the
+   ledger; S1 pair-accumulation alerting toward the 10-pair gate;
+   request-latency histograms, pool gauges, traces (unchanged).
 
 ### Testing & Quality Assurance
-- **Genuinely strong and twice-proven.** 68/68 this session on the
-   S-surface + audit + neighbors; the feature round's 32/32 plus the
-   audit's 11/11, zero `vi.mock`, real handlers × real backends. Two
-   separate live failures (stale expectation, shared-state pollution)
-   caught by the suite, plus three audit findings caught by adversarial
-   review — the process finds things.
-- **Gaps, ordered by risk:** (1) **No cross-file isolation** — still P0,
-   mitigated not fixed; (2) ~200s serial wall-time, +8 files this round;
-   (3) no coverage gates over the enrichment hub or probe diffing; (4) no
-   E2E — compare compliance section, MTEB table, estimator and optimizer
-   flows untested browser→API→DB; (5) extensions outside CI.
+- **Best shape yet.** 107 files / 600 pass local, 31/31 targeted on real
+   Postgres, zero `vi.mock`, three live fixes this round (matcher
+   threshold, order-dependent history tests, route-export build break) —
+   two caught by tests, one by the build. The suite + compiler + build
+   form a triple gate that actually gates.
+- **Gaps, ordered by risk:** (1) no E2E — compare compliance section,
+   MTEB table, estimator/optimizer flows, drift queue UI (nonexistent),
+   purge flow untested browser→API→DB; (2) serial ~160s wall-time;
+   (3) per-file parallel workers still future; (4) coverage thresholds
+   configured but first full run happens in CI (job added this round);
+   (5) extensions outside CI.
 
 ## 3. Critical Modifications & Technical Debt Remediation
 
 | Priority | Category | Component / Module | Issue / Technical Debt | Impact If Ignored | Recommended Fix |
 |---|---|---|---|---|---|
-| P0 | Cost control | `src/lib/active-probe.ts` + future scheduler | Budget is a constant; no spend ledger, kill switch, or alerting on paid calls (H3 fixed safety, not accounting) | Silent money burn; invoice-driven discovery | `probe_spend_ledger` table + `ACTIVE_PROBE_ENABLED` kill switch + page on spend-delta/calls-skipped; schedule only behind `CRON_SECRET` |
-| P0 | Testing | Local JSON backend × 98 suites | No per-file reset/isolation; price-history assertion now tolerates residue instead of assuming clean | Every ingestion-touching test is a latent flake; tolerance masks real regressions | Per-file namespaces + setup reset; git-ignore worker JSON; empty-state precondition; CI fails on committed `.radar-data*.json` |
-| P0 | Security review | S2 org scan | Code-complete and throttled, but unreviewed broad-permission surface; purge endpoint advertised but unimplemented | Ships broadest grant on inherited trust | Dedicated review + `contents:read`-only manifest + implement `DELETE /api/v1/org-scan` + uninstall-revocation proof |
-| P1 | Data freshness | 7 curated datasets | Hand-maintained rows rot (R1-0528 precedent ×7); compliance rows carry regulatory stakes | Stale compliance/pricing served as sourced fact | Named owner per file; `verify:sources` nightly paging; per-dataset age budgets (compliance/finetune shorter) |
-| P1 | Data model | `model_events.new_value` | Two JSONB conventions, no registry | Third event type invents a third shape | Document per-type schemas in `src/types/events.ts`; validate at `insertEvents` |
-| P1 | Reliability | `runActiveProbeCycle` fan-out | No per-call timeout/deadline/breaker; serial await over ≤30 paid calls | One hung provider stalls the cycle while spend accrues | `AbortSignal.timeout` per call + overall deadline + skip-and-record (mirror R8 pattern) |
-| P1 | Modularity | Route guards (×6 S routes) | Throttle + size-guard copy-pasted identically per route | Seventh route drifts (wrong order, missing guard) | Extract `withPublicGuards(handler, {maxBytes})` wrapper; org-scan keeps its session variant |
-| P2 | Testing | E2E + coverage + parallelism | No browser tests, no gates, ~200s serial | Regressions reach users; CI grows per round | Playwright smoke (compliance section, MTEB table, estimator, collecting-state); isolated per-file workers; coverage thresholds on `src/lib` |
-| P2 | Observability | S-spec usage metrics | CTR/completion/maturity signals have no sink | Cannot sunset misses; gates stay opinion | Lightweight metric events + monthly threshold review per S-item |
-| P2 | Ops | S10 gate | Doc exists, no vote scheduled | Held item unholds under pressure | Schedule ADR-010-pattern vote; default stays HELD |
+| P0 | Human gates | S2 review, S10 vote, ADR-013, OAuth checklist | Four decisions need outside counterparties; code is ready and waiting | Ready code rots; pressure builds to bypass gates | Schedule all four within 30 days; defaults stay closed (no pilot, HELD, proposed, design-only) |
+| P0 | Empiricism | First live probe cycle | Full spend pipeline never executed; token volumes, tails, ledger growth unmeasured | First incident happens on a real schedule instead of a supervised run | Provision one budget-capped key; run one watched-model cycle manually; read the ledger; then schedule |
+| P1 | Observability | S-metric event sink | All success metrics read 0; second threshold review impossible | Gates stay opinion; sunset rule unenforceable | Lightweight metric events + dashboard; S6/S3/S8 in-UI completion/vote signals |
+| P1 | Modularity | `catalog-enrichment.ts` | 6 joins + 2 filter families + latency helpers, composed by nesting in twins | Third family guarantees drift | Extract `queryCatalog()`; freeze legacy (sunset headers already shipped) |
+| P1 | Reliability | Overlap guard + cycle deadline | Single-instance flag; no overall deadline (worst case 30 × 15s serial) | Multi-instance double-spend; hung cycle occupies schedule | DB lease for overlap; overall cycle deadline with skip-and-record |
+| P1 | Data freshness | Nightly verify paging | Ages + owners configured, paging not yet running, nobody paged | Silent rot returns; compliance rows highest stakes | Enable nightly job paging owners; confirm first page fires |
+| P2 | Testing | E2E + parallel workers | No browser tests; serial suite; parallel needs isolated schemas | Regressions reach users; CI time grows | Playwright smoke (5 flows); PG per-worker schemas; then parallelize |
+| P2 | Ops | Drift queue UI | Queue API + table exist, no reviewer UI | Candidates accumulate unread; SLA unmeasurable | Minimal queue page reusing compare-page card patterns; review SLA defined |
+| P2 | Data lifecycle | Drift review retention | Decided rows accumulate forever | Slow table growth of decided rows | Archive-after-90d job for confirmed/dismissed (evidence export first) |
+| P2 | DX | Coverage first run | Thresholds configured, CI job added, full run unobserved | Unknown whether 60/60/55/60 holds on the enlarged tree | Watch first CI coverage job; adjust deliberately or fix coverage |
 
-### Before/After: P0 probe spend ledger (the remaining P0, H3 was safety)
+### Before/After: P0 first live cycle (procedure, not code)
 
 ```ts
-// TODAY (post-H3): safe per call, but blind in aggregate
-const res = await runActiveProbeCycle({ modelIds, generateFn });
-// res.errors + res.calls_skipped_over_budget exist — nobody persists them
+// BEFORE: pipeline complete, empirically empty
+// ACTIVE_PROBE_ENABLED unset → every trigger returns { status: 'disabled' }
+// probe_spend_ledger has zero rows; token-volume estimates are untested math
 
-// AFTER: every cycle leaves an accounting trail; scheduling is gated
-if (process.env.ACTIVE_PROBE_ENABLED !== 'true') return { status: 'disabled' };
-const res = await runActiveProbeCycle({ modelIds, generateFn });
-await recordProbeSpend({ cycle_id: runId, calls: res.calls_made,
-  errors: res.errors, est_tokens: estimate(res.samples), at: now() });
-// nightly: SUM per provider vs budget → page before invoice day
+// AFTER (supervised first cycle):
+// 1. Provision PROBE_OPENAI_KEY (budget cap $X, single-model allowlist).
+// 2. ACTIVE_PROBE_ENABLED=true (staging env only).
+// 3. Trigger with ?models=<one-watched-model> (live, not dry_run).
+// 4. Read probe_spend_ledger: calls/errors/est_tokens match expectations.
+// 5. Run getProbeSpendSince rollup; confirm alert query shape.
+// 6. Decide: schedule weekly (vercel dry_run→live flip) or tighten caps.
 ```
 
-### Before/After: P1 shared route guards (extract before the 7th route)
+### Before/After: P1 metric sink (smallest useful shape)
 
 ```ts
-// TODAY: identical two-line open across 5 public S routes (+ session variant)
-const auth = await validatePublicApiRequest(request);
-if (!auth.allowed && auth.errorResponse) return auth.errorResponse;
-const tooLarge = assertPayloadSize(request, 256 * 1024);
-if (tooLarge) return tooLarge;
-
-// AFTER: one wrapper, guards can't drift
-export const sRoute = (handler, { maxBytes } = {}) => async (req: NextRequest) => {
-  const auth = await validatePublicApiRequest(req);
-  if (!auth.allowed && auth.errorResponse) return auth.errorResponse;
-  if (maxBytes) { const tl = assertPayloadSize(req, maxBytes); if (tl) return tl; }
-  return handler(req);
-};
-export const POST = sRoute(computeEstimate, { maxBytes: 256 * 1024 });
+// BEFORE: success metrics exist only as spec prose + zero-count reviews
+// AFTER: one table, one writer, one dashboard query
+// metric_events HDL: (name, value, at) — S-route handlers emit
+//   ('s6.estimate.completed', 1), ('s8.codegen.vote', +1/-1), ...
+// Second threshold review reads SUMs instead of asserting zeros.
 ```
 
 ## 4. Optimization & Enhancement Recommendations
 
 ### Performance & Scalability
-- **Push S1 predicates to SQL.** Deprecations pulls 5000 events then pairs
-   in Node — add `event_type IN (...)` + provider pushdown (the
-   `catalog.ts:106-162` template) and a composite `(event_type,
-   detected_at)` index before announcement ingestion goes weekly.
-- **Retire `getLatestSnapshotsMap` full scans** from detail/health/
-   arbitrage/probe reads (unchanged hottest path).
-- **Deadline the probe fan-out** (§3 P1): per-call timeout + cycle budget
-   with skip-and-record, mirroring the R8 recommendation.
-- **Cache slow-stable S reads**: compliance/embeddings/finetune/battery
-   metadata change on curation cadence — `ETag`/`max-age` on the GETs;
-   keep money/decision POSTs uncached and `no-store` where sensitive.
-- **Pool defensively** (unchanged): timeouts landed; graceful shutdown on
-   remaining paths; PgBouncer before traffic steps.
+- **First CI coverage run is the next data point.** Job exists; if
+   60/60/55/60 fails on the enlarged tree, add tests (preferred) or lower
+   deliberately (recorded, never silent).
+- **Parallelize only after E2E exists.** Per-file workers speed the suite
+   but multiply backend semantics risk; ADR-012 isolation makes it safe,
+   E2E makes it verifiable. Order matters.
+- **`getLatestSnapshotsMap` full scans** remain the hottest unoptimized
+   path (fourth review naming it — schedule the predicate-pushdown or stop
+   listing it).
+- **Probe cycle deadline** (§3 P1): bound worst case below 30 × 15s with
+   skip-and-record.
+- **Cache slow-stable S reads** (`ETag`/`max-age` on compliance/embeddings/
+   battery GETs); keep money/decision POSTs uncached.
 
 ### Developer Experience (DX) & Tooling
-- **Fix test isolation structurally** (§3 P0): namespaces + setup reset +
-   git-ignored worker files + CI committed-file assertion. The tolerant
-   price-history assertion can then be re-tightened to positional.
-- **Typing ratchet.** `tsc` clean + 0-error eslint holds; add a scheduled
-   `any`-count check so S-round pragmatics don't normalize new ones.
-- **Guard wrapper** (§3 P1) so the next route can't forget throttle order
-   (auth before parse — the org-scan 401-before-413 pin proves order matters).
-- **S1 ingestion worker.** The only S-item still manual: changelog/RSS poll
-   reusing the ingestion-source pattern, emitting via
-   `buildDeprecationAnnouncementEvent`.
-- **Seed curation tooling.** Per-dataset `verify:sources` ages with owner
-   paging — compliance/finetune on shorter fuses than arena scores.
+- **Route-file rule is now documented.** Handlers + config only; helpers
+   in lib. The build enforces it — keep the rule next to the error by
+   leaving the comment in `probe-overlap.ts`.
+- **Review checklist update** (from three rounds of findings): `ns()` ids
+   in new suites; guards via wrapper (never bare); no non-handler route
+   exports; registry entry for new event types; manifest entry for new
+   tables. Five lines that prevent five findings.
+- **Seed curation tooling.** Enable the nightly verify job; the first
+   page is the milestone, not the configuration.
+- **S1 worker needs production traffic.** Weekly schedule ships; confirm
+   first run's `ingestion_runs` row and spot-check emitted events.
 
 ### Security & Hardening Quick-Wins
-- **Done and must be preserved:** H1 throttling on all 5 public S routes,
-   H2 pre-parse caps (auth-before-parse ordering on org-scan), H3
-   no-outage-as-drift, S6/S8 422-instead-of-guess, S3 `no-store`
-   session-only, S2 session-auth + 10/min + audit log, SSRF guards,
-   constant-time compares, tier vocabulary at every boundary.
-- **Remaining cheap items:** `ACTIVE_PROBE_ENABLED` kill switch (even
-   before the ledger — a boolean today beats accounting tomorrow);
-   implement the advertised org-scan purge endpoint; one `PROBE_*` key
-   rotation drill to prove the SECRETS.md procedure; scoped moderation
-   secret if S2 ever grows a review queue.
+- **Done and must be preserved:** 12-commit chain all green; H1/H2/H3
+   guards; guard wrapper; registry validation; kill switch OFF;
+   scheduler gate order; no-outage-as-drift; purge endpoint; sunset
+   headers; pilot allowlist (open state = unset, correctly permissive
+   pre-pilot since sessions still gate).
+- **Remaining cheap items:** one `PROBE_*` rotation drill pre-first-cycle;
+   `DELETE` purge proof against a test org; scope the pilot allowlist to
+   1–2 orgs at sign-off; review the 4MB org-scan cap after first real
+   pilot scan sizes are observed.
 
 ## 5. Future Engineering & Feature Roadmap
 
-### Phase 1: Stabilization & Hardening (Short-Term: Weeks 1–4)
-- [x] H1 throttling on all public S routes (shipped in audit)
-- [x] H2 pre-parse payload caps (shipped in audit)
-- [x] H3 probe per-call failure isolation (shipped in audit)
-- [ ] P0 probe spend ledger + kill switch + spend alert
-- [ ] P0 test isolation (namespaces + reset + git-ignore + CI assertion)
-- [ ] P0 S2 dedicated review + purge endpoint + uninstall proof
-- [ ] P1 S1 changelog/RSS poll worker (first real pairs accumulate)
-- [ ] P1 `withPublicGuards()` extraction; `new_value` schema registry
-- [ ] P1 per-dataset verify ages + named owners
-- [ ] S-spec usage-threshold first review (CTR, completions, MTEB views,
-   pair count, optimizer completions, codegen votes)
-- Exit criteria: ledger + kill switch live; suite green from empty state
-   twice running; S2 review signed; re-tightened positional assertions
+### Phase 1 (done — verify, don't redo)
 
-### Phase 2: Architectural Scaling & Performance (Medium-Term: Month 2–3)
-- [ ] Single-vs-dual-backend ADR with flake counts + CI minutes (§6 ADR-5)
-- [ ] Probe scheduling on cron infra (`CRON_SECRET`, overlap locks,
-   timeouts, cycle metrics in routing-stats style)
-- [ ] Deprecation read-path pushdown + `(event_type, detected_at)` index
-- [ ] Coverage thresholds on `src/lib`; isolated per-file workers; k6 paging
-- [ ] Retention: deprecation display window + org-scan result TTL
-- Exit criteria: suite time down or isolated; probe spend on a dashboard;
-   pages fire before users notice
+All 7 items shipped across `c76c1e2`→`00e1960` + docs: ledger/kill-switch,
+isolation contract, purge + review package, changelog worker, guard
+wrapper + registry, verify ages, threshold review. Residual: first nightly
+page unobserved; first worker production run pending.
 
-### Phase 3: Next-Generation Feature Expansion (Long-Term: Month 4–6+)
+### Phase 2 (done — operate, don't rebuild)
+
+ADR-012 decided; scheduler built (dry_run scheduled, live manual);
+pushdown pinned; CI hygiene + coverage jobs added; retention wired.
+Residual: first CI coverage run; overlap DB lease; cycle deadline.
+
+### Phase 3: Next (Months 1–3 from here)
 
 | Feature | Business / Technical Value | Complexity | Architectural Prerequisites |
 |---|---|---|---|
-| S10 go/no-go vote | Unlocks pricing intel or kills it cleanly | Low (decision) / High (build) | ADR-010-pattern sign-off; threshold + bounds (`docs/S10_LIMITATIONS.md` §3) |
-| S1 maturity promotion | First trust-moat signal ("provider X gives N days notice") | Low | 10+ real pairs via Phase-1 worker; collecting UI already built |
-| S4 drift review queue | Turns diffs into human decisions | Med | Scheduled cycles + ledger; reviewer role; no-auto-verdict preserved |
-| S5 latency as comparator sort | "Fast + cheap + good" in one view | Low | Cycle history; scope-note rendering in comparator |
-| S2 GitHub App pilot | Org-level acquisition motion | High | P0 review signed; manifest; allowlist + uninstall proof |
-| OAuth billing connections (R5 stretch) | Removes CSV friction; habit imports | High | Token-storage audit (unchanged) |
-| Multi-source consensus pricing | Data moat + single-source resilience | High | Reviewed connectors; weighted-merge ADR; breakers (shipped) |
-| Public API v2 + usage tiers | Developer acquisition; monetized S surfaces | Med | Legacy freeze; quotas (shipped); S-route quota mapping |
-| Unified anomaly + drift signals | One event-cited signal surface | Low | Drift queue shares display contract (diffs + citations, no scores) |
+| First live probe cycle | Empirical spend/latency data; de-risks scheduling | S (procedure) | Budget-capped key; kill switch (live) ✅ |
+| S-metric event sink | Makes second threshold review possible | S–M | Route touchpoints identified ✅ |
+| Drift queue UI | Candidates get reviewed; SLA measurable | M | Queue API ✅ (this round) |
+| S1 promotion | First trust-moat signal live | S | 10 pairs via weekly worker (0 now) |
+| S2 pilot (post-sign-off) | Org acquisition motion | M | Independent + sponsor signatures; allowlist ✅ |
+| Latency-driven comparator promo | "Fast+cheap+good" as default view | S | Cycle history (needs live cycles) |
+| S10 vote | Unlock or kill pricing intel | S (decision) | Legal counterparty; §3 package ✅ |
+| OAuth implementation | Remove CSV friction | L | Audit checklist sign-off (`OAUTH_BILLING_AUDIT.md`) |
+| Consensus merge engine | Data moat + resilience | M | ADR-013 ratification; reviewed connectors |
+| API v2 build | Versioned growth; monetized S tiers | M | V2 plan ✅; sunset headers ✅ |
 
 ## 6. Technical Decision Log (ADR Recommendations)
 
-**ADR-5: Single-backend or contract-tested dual-backend — decide with
-numbers.** The JSON backend's file-shared semantics caused the only
-suite failure in two rounds; tolerance now masks the next one. Either
-(a) per-file isolated backends with a setup contract, or (b) JSON as
-seeded-fixture mode with Docker Postgres required for dev/CI. Inputs:
-flake count over 30 days, dual-run CI minutes, contributor friction.
-Each feature round widens the blast radius.
+**ADR-012: DECIDED (this round).** Per-file isolation with setup contract;
+JSON retained. Flake counter armed (3 escapes/90d reopens). Implementation
+complete: helpers, startup reset, CI gate.
 
-**ADR-9: Active-probe cost accounting.** Ledger schema (cycle, model,
-calls, errors, est. tokens, provider), budget source of truth (env vs
-table), kill-switch semantics, paging thresholds, provider-cap ownership.
-H3 made cycles safe; this ADR makes them accountable. Decide before the
-first scheduled cycle — the code is ready, the account is not.
+**ADR-09 (probe cost accounting): EFFECTIVELY DECIDED by implementation.**
+Ledger schema, env kill switch, gate order, per-model attribution, and
+retention all landed; paging thresholds are the remaining open parameter —
+set them from first-cycle data, not theory.
 
-**ADR-10 (S10): Enterprise-pricing go/no-go.** Pre-framed in
-`docs/S10_LIMITATIONS.md`: legal sign-off, disclaimer copy, threshold
-(≥5 orgs), bounds + reviewer role. Default HELD; shipping without the
-vote repeats R10's anti-pattern.
+**ADR-10 (S10): HELD, vote unscheduled.** Package complete
+(`S10_LIMITATIONS.md` + status row). Next action is calendaring, not
+analysis — name the legal reviewer.
 
-**ADR-6 (carried): Sync crons vs async workers.** Digest, probes, and
-active-probe cycles run request-scoped under serverless ceilings. Options
-unchanged (cursors + overlap locks vs queue vs off-Vercel jobs). Trigger:
-any cycle past 50% of its interval or first overlap — instrument
-durations now, including probe cycles.
+**ADR-013 (consensus pricing): PROPOSED, awaiting ratification.**
+Weighted-median + divergence-signal design recorded; per-source breakers
+already shipped. Ratify/amend/reject before any merge engine.
+
+**ADR-6 (carried, fourth review): sync crons vs async workers.** Five
+scheduled surfaces now (poll, probes, digest ×2, deprecations, active-probe
+dry-run). Trigger unchanged: any cycle past 50% of its interval or first
+overlap — instrument durations now; the overlap flag already reports.
