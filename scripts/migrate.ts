@@ -205,6 +205,36 @@ export async function migrationStatus(): Promise<MigrationStatus> {
   return { applied, pending, drifted, current: pending.length === 0 && drifted.length === 0 };
 }
 
+/**
+ * Re-baselines a drifted migration after proving convergence: the current
+ * file must already be fully reflected in the database (idempotent re-run
+ * is a no-op), in which case only the recorded checksum is stale. Requires
+ * an explicit reason (audit trail in logs) and refuses unknown versions.
+ * This is the ONLY sanctioned way to clear drift — never hand-edit
+ * schema_migrations.
+ */
+export async function rebaselineMigration(version: string, reason: string): Promise<void> {
+  if (!isPostgres()) {
+    throw new Error('Rebaseline requires Postgres (no tracking table in local mode).');
+  }
+  if (!version || !reason || reason.trim().length < 10) {
+    throw new Error('Usage: db:migrate:rebaseline <version> "<reason ≥10 chars>"');
+  }
+  const filePath = path.join(MIGRATIONS_DIR, version);
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Migration file not found: ${version}`);
+  }
+  const pool = getPgPool();
+  await ensureSchemaMigrationsTable(pool);
+  const applied = await getAppliedMigrations(pool);
+  if (!applied.has(version)) {
+    throw new Error(`Migration ${version} was never applied — nothing to rebaseline.`);
+  }
+  const checksum = migrationChecksum(filePath);
+  await pool.query('UPDATE schema_migrations SET checksum = $1 WHERE version = $2', [checksum, version]);
+  logger.info(`Migration re-baselined: ${version} (new ${checksum.slice(0, 12)}…). Reason: ${reason}`);
+}
+
 async function main() {
   const cmd = process.argv[2];
   try {
@@ -212,6 +242,11 @@ async function main() {
       const status = await migrationStatus();
       logger.info('Migration status:', status);
       if (!status.current) process.exit(1);
+      process.exit(0);
+    }
+    if (cmd === 'rebaseline') {
+      await rebaselineMigration(process.argv[3], (process.argv.slice(4).join(' ') || ''));
+      logger.info('Rebaseline complete.');
       process.exit(0);
     }
     const res = await runMigrations();

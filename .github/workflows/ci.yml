@@ -129,11 +129,18 @@ jobs:
           NODE_ENV: test
           ADMIN_SECRET: test-admin-secret
 
+      - name: Migration status gate (postgres mode only)
+        if: matrix.db-mode == 'postgres'
+        run: npm run db:migrate:status
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_model_radar_test
+          NODE_ENV: test
+
       - name: Cleanup test database (postgres mode only)
         if: always() && matrix.db-mode == 'postgres'
         run: |
           PGPASSWORD=postgres psql -h localhost -U postgres -d ai_model_radar_test \
-            -c "TRUNCATE model_snapshots, model_events, ingestion_runs, api_keys, digest_deliveries, users, user_watchlists, alert_rules, teams, team_members, team_watchlists, usage_profiles, endpoint_telemetry, budget_rules, budget_alerts, migration_approvals, processed_stripe_event_ids, schema_migrations CASCADE;"
+            -c "TRUNCATE model_snapshots, model_events, ingestion_runs, api_keys, digest_deliveries, users, user_watchlists, alert_rules, teams, team_members, team_watchlists, usage_profiles, endpoint_telemetry, budget_rules, budget_alerts, migration_approvals, approval_votes, shadow_ai_findings, webhook_dlq, model_eol, eval_runs, usage_imports, compound_rules, case_studies, export_connectors, routing_attempts, routing_pilot_optins, processed_stripe_event_ids, fk_orphans, schema_migrations CASCADE;"
 
   build:
     name: Next.js production build
