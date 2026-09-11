@@ -48,7 +48,13 @@ export async function GET(request: NextRequest) {
     const total = hasAttrFilter || category !== 'all' ? models.length : data.total;
     const page = hasAttrFilter ? models.slice(offset, offset + limit) : models;
 
-    return NextResponse.json({ models: enrichModels(page), total });
+    // P3 (ADR-4 freeze re-affirmed): the legacy surface is frozen — every
+    // response carries machine-readable sunset headers pointing at v1.
+    const res = NextResponse.json({ models: enrichModels(page), total });
+    res.headers.set('Deprecation', 'true');
+    res.headers.set('Sunset', 'Wed, 01 Jul 2026 00:00:00 GMT');
+    res.headers.set('Link', '</api/v1/models>; rel="successor-version"');
+    return res;
   } catch (error: any) {
     console.error('API /api/models error:', error);
     return NextResponse.json({ error: 'Failed to fetch models' }, { status: 500 });

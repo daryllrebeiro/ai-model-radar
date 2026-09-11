@@ -58,3 +58,13 @@ export function scanFilesForModels(
 export function toReportIndex(matches: OrgMatch[]): OrgFileRef[] {
   return matches.map((m) => ({ repo: m.repo, path: m.path, line: m.line, matched_line: m.matched_line }));
 }
+
+/**
+ * P3 pilot gate (pure, unit-tested). Empty allowlist = gate open (pre-pilot
+ * review state); non-empty = only named orgs (case-insensitive).
+ */
+export function isOrgAllowlisted(org: string, allowlistRaw = process.env.ORG_SCAN_PILOT_ALLOWLIST || ''): boolean {
+  const list = allowlistRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (list.length === 0) return true;
+  return list.includes(org.toLowerCase());
+}

@@ -32,7 +32,7 @@ export const modelsQuerySchema = z.object({
     .transform((val) => (val === undefined ? undefined : val === 'true')),
   // S9 category switch (chat | embedding | all). Absent = all.
   category: z.enum(['chat', 'embedding', 'all']).optional().default('all'),
-  sortBy: z.enum(['name', 'price', 'context', 'updated']).default('name'),
+  sortBy: z.enum(['name', 'price', 'context', 'updated', 'latency']).default('name'),
   limit: z
     .string()
     .optional()

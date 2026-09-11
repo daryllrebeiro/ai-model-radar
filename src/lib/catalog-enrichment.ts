@@ -63,3 +63,33 @@ export function applyCategoryFilter(models: ModelCurrent[], category?: string): 
   if (category !== 'chat' && category !== 'embedding') return models;
   return models.filter((m) => classifyModelCategory(m.model_id) === category);
 }
+
+/**
+ * P3 (S5) — latency sort from first-party probe telemetry. Latest p95 per
+ * model; models without telemetry sort LAST (unknown slowness must never
+ * outrank measured speed, nor pose as fast). Scope note travels with the
+ * response — see ACTIVE_PROBE_SCOPE_NOTE.
+ */
+export function latestP95ByModel(
+  records: Array<{ model_id: string; p95_latency_ms: number | null; checked_at: string }>
+): Map<string, number> {
+  const best = new Map<string, { p95: number; at: number }>();
+  for (const r of records) {
+    if (r.p95_latency_ms === null || r.p95_latency_ms === undefined) continue;
+    const at = new Date(r.checked_at).getTime();
+    const cur = best.get(r.model_id);
+    if (!cur || at > cur.at) best.set(r.model_id, { p95: r.p95_latency_ms, at });
+  }
+  return new Map([...best.entries()].map(([k, v]) => [k, v.p95]));
+}
+
+export function sortModelsByLatency(models: ModelCurrent[], p95ByModel: Map<string, number>): ModelCurrent[] {
+  return [...models].sort((a, b) => {
+    const pa = p95ByModel.get(a.model_id);
+    const pb = p95ByModel.get(b.model_id);
+    if (pa === undefined && pb === undefined) return 0;
+    if (pa === undefined) return 1;
+    if (pb === undefined) return -1;
+    return pa - pb;
+  });
+}

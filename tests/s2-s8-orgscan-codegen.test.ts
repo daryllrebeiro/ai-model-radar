@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scanFilesForModels, extractModelRefs } from '../src/lib/org-scan';
+import { scanFilesForModels, extractModelRefs, isOrgAllowlisted } from '../src/lib/org-scan';
 import { ORG_SCAN_SCOPES, ORG_SCAN_DATA_POLICY } from '../src/types/org-scan';
 import { transformCode, detectPair } from '../src/lib/migration-codegen';
 import { MIGRATION_BEHAVIORAL_CAVEAT } from '../src/types/migration-codegen';
@@ -29,6 +29,12 @@ describe('S2 org scan (report-only, minimal scope)', () => {
       () => 'removed'
     );
     expect(matches[0].risk_note).toContain('MODEL_REMOVED');
+  });
+
+  it('pilot allowlist is open when unset, scoped when set', () => {
+    expect(isOrgAllowlisted('acme', '')).toBe(true);
+    expect(isOrgAllowlisted('Acme', 'acme, globex')).toBe(true);
+    expect(isOrgAllowlisted('initech', 'acme, globex')).toBe(false);
   });
 });
 
