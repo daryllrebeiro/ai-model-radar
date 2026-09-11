@@ -37,6 +37,7 @@ export * from './dlq';
 export * from './evals';
 export * from './eol';
 export * from './usage-imports';
+export * from './retention';
 export * from './compound-rules';
 export * from './case-studies';
 export * from './export-connectors';
