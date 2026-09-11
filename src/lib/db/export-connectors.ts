@@ -4,7 +4,7 @@
  */
 import { isPostgres, getPgPool, getLocalState, saveLocalState } from './client';
 import type { ExportConnectorType } from '../export-connectors';
-import { encryptSecret, decryptSecret } from '../secret-store';
+import { encryptSecret, decryptSecret, reencryptAllSecrets } from '../secret-store';
 
 export interface ExportConnectorRecord {
   id: number;
@@ -138,6 +138,37 @@ export async function markConnectorRun(
     found.last_status = status.slice(0, 20);
     saveLocalState(state);
   }
+}
+
+/**
+ * Re-encrypt all connector secrets using the current key ring.
+ * Admin-only operation — called by rotation script or admin endpoint.
+ */
+export async function reencryptAllConnectorSecrets(): Promise<{
+  reencrypted: number;
+  failed: string[];
+}> {
+  if (isPostgres()) {
+    const pool = getPgPool();
+    const getAll = async () => {
+      const res = await pool.query('SELECT id, secret FROM export_connectors WHERE secret IS NOT NULL');
+      return res.rows.map((r: any) => ({ id: Number(r.id), secret: r.secret }));
+    };
+    const updateOne = async (id: number, newSecret: string) => {
+      await pool.query('UPDATE export_connectors SET secret = $1 WHERE id = $2', [newSecret, id]);
+    };
+    return reencryptAllSecrets(getAll, updateOne);
+  }
+  const state = getLocalState();
+  const getAll = async () => state.export_connectors.map((r: any) => ({ id: Number(r.id), secret: r.secret }));
+  const updateOne = async (id: number, newSecret: string) => {
+    const found = state.export_connectors.find((r: any) => Number(r.id) === Number(id));
+    if (found) {
+      found.secret = newSecret;
+      saveLocalState(state);
+    }
+  };
+  return reencryptAllSecrets(getAll, updateOne);
 }
 
 export async function deleteExportConnector(userId: number, id: number): Promise<boolean> {

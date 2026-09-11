@@ -19,6 +19,7 @@ afterEach(() => {
 });
 
 const ENC_KEY = 'audit10-test-connector-key-sufficiently-long';
+const ENC_KEYS = 'v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 async function keyFor(email: string) {
   await createOrGetUser({ email });
@@ -46,16 +47,16 @@ async function createAs(key: string, body: unknown) {
 
 describe('R8 credential storage: encrypted at rest, fail-closed without key', () => {
   it('AES-GCM round-trips; wrong key cannot decrypt', () => {
-    const ct = encryptSecret('dd-secret-123', { EXPORT_CONNECTOR_KEY: ENC_KEY } as any);
+    const ct = encryptSecret('dd-secret-123', { EXPORT_CONNECTOR_KEYS: ENC_KEYS } as any);
     expect(isEncryptedSecret(ct)).toBe(true);
     expect(ct).not.toContain('dd-secret-123');
-    expect(decryptSecret(ct, { EXPORT_CONNECTOR_KEY: ENC_KEY } as any)).toBe('dd-secret-123');
-    expect(() => decryptSecret(ct, { EXPORT_CONNECTOR_KEY: 'wrong-key' } as any)).toThrow();
-    expect(() => decryptSecret('plaintext-row', { EXPORT_CONNECTOR_KEY: ENC_KEY } as any)).toThrow(/legacy/);
+    expect(decryptSecret(ct, { EXPORT_CONNECTOR_KEYS: ENC_KEYS } as any)).toBe('dd-secret-123');
+    expect(() => decryptSecret(ct, { EXPORT_CONNECTOR_KEYS: 'wrong-key' } as any)).toThrow();
+    expect(() => decryptSecret('plaintext-row', { EXPORT_CONNECTOR_KEYS: ENC_KEYS } as any)).toThrow(/legacy/);
   });
 
   it('refuses secret-bearing connectors when no encryption key is configured', async () => {
-    delete process.env.EXPORT_CONNECTOR_KEY;
+    delete process.env.EXPORT_CONNECTOR_KEYS;
     const key = await keyFor(uniqueEmail('r8.nokey'));
     const res = await createAs(key, { name: 'dd', type: 'datadog', secret: 'shh' });
     expect(res.status).toBe(400);
@@ -65,7 +66,7 @@ describe('R8 credential storage: encrypted at rest, fail-closed without key', ()
   });
 
   it('stored row holds ciphertext; delivery path decrypts (never the read path)', async () => {
-    process.env.EXPORT_CONNECTOR_KEY = ENC_KEY;
+    process.env.EXPORT_CONNECTOR_KEYS = ENC_KEYS;
     const email = uniqueEmail('r8.enc');
     const key = await keyFor(email);
     const created = await createAs(key, { name: 'dd', type: 'datadog', secret: 'super-secret-token' });
@@ -85,11 +86,11 @@ describe('R8 credential storage: encrypted at rest, fail-closed without key', ()
     if (isPostgres()) {
       const pool = getPgPool();
       const res = await pool.query('SELECT secret FROM export_connectors WHERE id = $1', [connector.id]);
-      expect(res.rows[0].secret.startsWith('enc:v1:')).toBe(true);
+      expect(res.rows[0].secret.startsWith('enc:v2:')).toBe(true);
       expect(res.rows[0].secret).not.toContain('super-secret-token');
     } else {
       const row = getLocalState().export_connectors.find((r: any) => r.id === connector.id);
-      expect(String(row.secret).startsWith('enc:v1:')).toBe(true);
+      expect(String(row.secret).startsWith('enc:v2:')).toBe(true);
     }
 
     // Delivery-only accessor decrypts for the owner.
@@ -100,7 +101,7 @@ describe('R8 credential storage: encrypted at rest, fail-closed without key', ()
 
 describe('R8 cross-user isolation (IDOR on connectors)', () => {
   it("B cannot run, read-secret, or delete A's connector", async () => {
-    process.env.EXPORT_CONNECTOR_KEY = ENC_KEY;
+    process.env.EXPORT_CONNECTOR_KEYS = ENC_KEYS;
     const a = uniqueEmail('r8a');
     const b = uniqueEmail('r8b');
     const keyA = await keyFor(a);
