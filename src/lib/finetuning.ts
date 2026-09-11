@@ -3,6 +3,9 @@ import { RAW_BENCHMARK_DATA } from './benchmarks';
 
 /**
  * S6 — Sourced fine-tuning pricing + pure build-vs-buy estimator.
+ * Data owner: finetuning (verify:sources pages this owner on staleness;
+ * budget 180d — money stakes). See DATASET_OWNERS in source-verify.ts.
+ *
  * Inference prices for the "prompt the large model" side come from tracked
  * benchmark pricing (same sourcing discipline as base pricing).
  */

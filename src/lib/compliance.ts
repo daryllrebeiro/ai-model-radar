@@ -7,6 +7,9 @@ import {
 /**
  * S7 — Curated, sourced provider compliance records.
  *
+ * Data owner: compliance (verify:sources pages this owner on staleness;
+ * budget 180d — regulatory stakes). See DATASET_OWNERS in source-verify.ts.
+ *
  * Provider-level by design (see types/compliance.ts). Every claim carries a
  * source URL + verified date. Unknown = null, never false. No legal advice.
  */

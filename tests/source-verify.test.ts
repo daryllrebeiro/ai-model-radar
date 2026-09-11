@@ -4,6 +4,8 @@ import {
   evaluateSource,
   sourceAgeDays,
   checkSources,
+  DATASET_MAX_AGE_DAYS,
+  DATASET_OWNERS,
 } from '../src/lib/source-verify';
 
 describe('source verification policy (no network)', () => {
@@ -15,7 +17,20 @@ describe('source verification policy (no network)', () => {
       expect(r.verified_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
     const datasets = new Set(refs.map((r) => r.dataset));
-    expect(datasets).toEqual(new Set(['benchmarks', 'capabilities', 'licenses', 'compliance', 'embeddings']));
+    expect(datasets).toEqual(new Set(['benchmarks', 'capabilities', 'licenses', 'compliance', 'embeddings', 'finetuning']));
+  });
+
+  it('P1-6: compliance/finetune rot faster; every dataset has an owner', () => {
+    expect(DATASET_MAX_AGE_DAYS.compliance).toBeLessThan(DATASET_MAX_AGE_DAYS.benchmarks);
+    expect(DATASET_MAX_AGE_DAYS.finetuning).toBeLessThan(DATASET_MAX_AGE_DAYS.benchmarks);
+    for (const d of Object.keys(DATASET_MAX_AGE_DAYS) as Array<keyof typeof DATASET_MAX_AGE_DAYS>) {
+      expect(DATASET_OWNERS[d]).toMatch(/data-owner:/);
+    }
+    // Per-dataset budgets apply by default: a 200-day-old compliance record
+    // fails while a 200-day-old benchmark passes (same HTTP 200).
+    const mkRef = (dataset: any) => ({ dataset, model_id: 'x/y', source_name: 'S', source_url: 'https://s.t/', verified_date: 'x' });
+    expect(evaluateSource(mkRef('compliance'), 200, null, 200, DATASET_MAX_AGE_DAYS.compliance)).toBe('fail');
+    expect(evaluateSource(mkRef('benchmarks'), 200, null, 200, DATASET_MAX_AGE_DAYS.benchmarks)).toBe('ok');
   });
 
   it('verdict matrix: ok / bot-blocked-warn / dead-fail / stale-fail', () => {

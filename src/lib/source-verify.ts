@@ -8,14 +8,38 @@ import { RAW_CAPABILITY_DATA } from './capabilities';
 import { RAW_LICENSE_DATA } from './licenses';
 import { RAW_COMPLIANCE_DATA, RAW_COMPLIANCE_OVERRIDES } from './compliance';
 import { RAW_EMBEDDING_DATA, RAW_EMBEDDING_BENCHMARKS } from './embeddings';
+import { RAW_FINETUNE_PRICING } from './finetuning';
 
 export interface SourceRef {
-  dataset: 'benchmarks' | 'capabilities' | 'licenses' | 'compliance' | 'embeddings';
+  dataset: 'benchmarks' | 'capabilities' | 'licenses' | 'compliance' | 'embeddings' | 'finetuning';
   model_id: string;
   source_name: string;
   source_url: string;
   verified_date: string;
 }
+
+/**
+ * P1-6 — per-dataset age budgets + owners. Compliance and finetune rows
+ * carry regulatory/money stakes, so they rot faster than arena scores.
+ * The nightly job pages the OWNER, not just fails the build.
+ */
+export const DATASET_MAX_AGE_DAYS: Record<SourceRef['dataset'], number> = {
+  benchmarks: 365,
+  capabilities: 365,
+  licenses: 365,
+  compliance: 180,
+  embeddings: 365,
+  finetuning: 180,
+};
+
+export const DATASET_OWNERS: Record<SourceRef['dataset'], string> = {
+  benchmarks: 'data-owner:benchmarks (see src/lib/benchmarks.ts)',
+  capabilities: 'data-owner:capabilities (see src/lib/capabilities.ts)',
+  licenses: 'data-owner:licenses (see src/lib/licenses.ts)',
+  compliance: 'data-owner:compliance (see src/lib/compliance.ts)',
+  embeddings: 'data-owner:embeddings (see src/lib/embeddings.ts)',
+  finetuning: 'data-owner:finetuning (see src/lib/finetuning.ts)',
+};
 
 export function collectSources(): SourceRef[] {
   return [
@@ -68,6 +92,13 @@ export function collectSources(): SourceRef[] {
       source_url: r.source_url,
       verified_date: r.tested_date,
     })),
+    ...RAW_FINETUNE_PRICING.map((r) => ({
+      dataset: 'finetuning' as const,
+      model_id: r.base_model,
+      source_name: r.source_name,
+      source_url: r.source_url,
+      verified_date: r.verified_date,
+    })),
   ];
 }
 
@@ -116,7 +147,10 @@ export async function checkSources(opts: {
   timeoutMs?: number;
   nowMs?: number;
 } = {}): Promise<{ results: SourceResult[]; failed: number; warned: number }> {
-  const { fetchFn = fetch, maxAgeDays = 365, timeoutMs = 10000, nowMs = Date.now() } = opts;
+  const { fetchFn = fetch, timeoutMs = 10000, nowMs = Date.now() } = opts;
+  // P1-6: per-dataset budgets by default; an explicit maxAgeDays still
+  // overrides globally (CI escape hatch, use deliberately).
+  const ageFor = (dataset: SourceRef['dataset']) => opts.maxAgeDays ?? DATASET_MAX_AGE_DAYS[dataset];
   const refs = collectSources();
   const byUrl = new Map<string, SourceRef[]>();
   for (const r of refs) {
@@ -148,7 +182,7 @@ export async function checkSources(opts: {
     }
     for (const ref of group) {
       const ageDays = sourceAgeDays(ref.verified_date, nowMs);
-      const verdict = evaluateSource(ref, httpStatus, networkError, ageDays, maxAgeDays);
+      const verdict = evaluateSource(ref, httpStatus, networkError, ageDays, ageFor(ref.dataset));
       if (verdict === 'fail') failed++;
       else if (verdict === 'warn') warned++;
       results.push({
