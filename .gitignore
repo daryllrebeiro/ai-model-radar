@@ -32,6 +32,8 @@ radar.db-journal
 *.sqlite
 *.sqlite3
 .radar-data.json
+.radar-data-worker-*.json
+.radar-data.json.tmp
 backups/
 backups-test/
 

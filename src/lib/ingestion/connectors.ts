@@ -124,6 +124,15 @@ export function isConnectorRunnable(connector: SourceConnector, env = process.en
   return allowlistedConnectorKeys(env).includes(connector.key.toLowerCase());
 }
 
+/** P2: enforced per-source timeout (throw-and-isolate, with a deadline). */
+export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /**
  * Runs one reviewed + allowlisted connector and returns STRICTLY validated
  * snapshots. Does NOT persist — the caller (a human-operated script, never
@@ -131,14 +140,19 @@ export function isConnectorRunnable(connector: SourceConnector, env = process.en
  */
 export async function runConnector(
   connector: SourceConnector,
-  opts: { fetchFn?: typeof fetch; polledAt?: string; env?: NodeJS.ProcessEnv } = {}
+  opts: { fetchFn?: typeof fetch; polledAt?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}
 ): Promise<ModelSnapshot[]> {
   if (!isConnectorRunnable(connector, opts.env)) {
     throw new Error(
       `Connector "${connector.key}" is not runnable (needs status=reviewed + CONNECTORS_ALLOWLIST entry).`
     );
   }
-  const raw = await connector.fetchRaw(opts.fetchFn);
+  const timeoutMs = Math.min(120000, Math.max(1000, Math.floor(opts.timeoutMs ?? 30000)));
+  const raw = await withTimeout(
+    connector.fetchRaw(opts.fetchFn),
+    timeoutMs,
+    `Connector "${connector.key}" timed out after ${timeoutMs}ms`
+  );
   if (!Array.isArray(raw)) throw new Error(`Connector "${connector.key}" returned a non-array payload.`);
   if (raw.length > 5000) throw new Error(`Connector "${connector.key}" returned ${raw.length} records (cap 5000).`);
   const polledAt = opts.polledAt || new Date().toISOString();

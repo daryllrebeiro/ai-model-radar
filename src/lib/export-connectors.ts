@@ -24,9 +24,17 @@ export interface ExportRunResult {
   success: boolean;
   pushed: number;
   error?: string;
+  deadlineExceeded?: boolean;
 }
 
+export const DATADOG_DEFAULT_URL = 'https://api.datadoghq.com/api/v1/events';
+export const EXPORT_RUN_DEADLINE_MS = 30000;
+
 type FetchFn = typeof fetch;
+
+function deadlineError(pushed: number): ExportRunResult {
+  return { success: false, pushed, error: 'Export deadline exceeded — partial push, retry remaining events.', deadlineExceeded: true };
+}
 
 function eventLine(e: ModelEvent): string {
   const pct = e.pct_change !== null && e.pct_change !== undefined ? ` (${e.pct_change}%)` : '';
@@ -51,11 +59,12 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   }
 }
 
-async function runDatadog(input: ExportRunInput, fetchFn: FetchFn): Promise<ExportRunResult> {
+async function runDatadog(input: ExportRunInput, fetchFn: FetchFn, deadlineAt: number): Promise<ExportRunResult> {
   if (!input.secret) return { success: false, pushed: 0, error: 'Datadog requires an API key (secret).' };
-  const url = input.destinationUrl || 'https://api.datadoghq.com/api/v1/events';
+  const url = input.destinationUrl || DATADOG_DEFAULT_URL;
   let pushed = 0;
   for (const e of input.events.slice(0, 20)) {
+    if (Date.now() > deadlineAt) return deadlineError(pushed);
     const r = await postJson(
       url,
       { 'DD-API-KEY': input.secret },
@@ -74,12 +83,13 @@ async function runDatadog(input: ExportRunInput, fetchFn: FetchFn): Promise<Expo
   return { success: true, pushed };
 }
 
-async function runGrafana(input: ExportRunInput, fetchFn: FetchFn): Promise<ExportRunResult> {
+async function runGrafana(input: ExportRunInput, fetchFn: FetchFn, deadlineAt: number): Promise<ExportRunResult> {
   if (!input.secret) return { success: false, pushed: 0, error: 'Grafana requires an API token (secret).' };
   if (!input.destinationUrl) return { success: false, pushed: 0, error: 'Grafana requires the instance base URL.' };
   const url = `${input.destinationUrl.replace(/\/$/, '')}/api/annotations`;
   let pushed = 0;
   for (const e of input.events.slice(0, 20)) {
+    if (Date.now() > deadlineAt) return deadlineError(pushed);
     const r = await postJson(
       url,
       { Authorization: `Bearer ${input.secret}` },
@@ -96,11 +106,12 @@ async function runGrafana(input: ExportRunInput, fetchFn: FetchFn): Promise<Expo
   return { success: true, pushed };
 }
 
-async function runNotion(input: ExportRunInput, fetchFn: FetchFn): Promise<ExportRunResult> {
+async function runNotion(input: ExportRunInput, fetchFn: FetchFn, deadlineAt: number): Promise<ExportRunResult> {
   if (!input.secret) return { success: false, pushed: 0, error: 'Notion requires an integration token (secret).' };
   if (!input.destinationUrl) return { success: false, pushed: 0, error: 'Notion requires a database ID (destination).' };
   let pushed = 0;
   for (const e of input.events.slice(0, 20)) {
+    if (Date.now() > deadlineAt) return deadlineError(pushed);
     const r = await postJson(
       'https://api.notion.com/v1/pages',
       { Authorization: `Bearer ${input.secret}`, 'Notion-Version': '2022-06-28' },
@@ -139,18 +150,24 @@ async function runAirtable(input: ExportRunInput, fetchFn: FetchFn): Promise<Exp
   return { success: true, pushed: records.length };
 }
 
-/** Runs one connector push over recent events. Secrets stay in headers only. */
+/**
+ * Runs one connector push over recent events. Secrets stay in headers only.
+ * P2: one overall deadline across the whole push (default 30s) — a slow
+ * destination serially delaying 20 events no longer eats the cron budget.
+ */
 export async function runExportConnector(
   input: ExportRunInput,
-  opts: { fetchFn?: FetchFn } = {}
+  opts: { fetchFn?: FetchFn; deadlineMs?: number } = {}
 ): Promise<ExportRunResult> {
   const fetchFn = opts.fetchFn || fetch;
   if (input.events.length === 0) return { success: true, pushed: 0 };
+  const deadlineMs = Math.min(120000, Math.max(1000, Math.floor(opts.deadlineMs ?? EXPORT_RUN_DEADLINE_MS)));
+  const deadlineAt = Date.now() + deadlineMs;
   try {
     switch (input.type) {
-      case 'datadog': return await runDatadog(input, fetchFn);
-      case 'grafana': return await runGrafana(input, fetchFn);
-      case 'notion': return await runNotion(input, fetchFn);
+      case 'datadog': return await runDatadog(input, fetchFn, deadlineAt);
+      case 'grafana': return await runGrafana(input, fetchFn, deadlineAt);
+      case 'notion': return await runNotion(input, fetchFn, deadlineAt);
       case 'airtable': return await runAirtable(input, fetchFn);
       default: return { success: false, pushed: 0, error: `Unknown connector type.` };
     }

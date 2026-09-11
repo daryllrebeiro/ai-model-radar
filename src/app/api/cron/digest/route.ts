@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRecentEvents, getActiveAlertRules, getUserWatchlistByEmail, getLatestSnapshotsMap, getEvents, getUsageProfileByEmail, listActiveCompoundRulesByOwnerEmails } from '@/lib/db/queries';
 import { renderDigestHtml, sendEmailDigest } from '@/lib/email/resend';
-import { evaluateCompoundRules } from '@/lib/compound-rules';
-import { escapeHtml } from '@/lib/sanitize';
+import { evaluateCompoundForDigest, appendCompoundSections } from '@/lib/compound-digest';
 import { getPriceDropForecasts } from '@/lib/forecast';
 import { detectMarketSignals } from '@/lib/signals';
 import { maxMonthlySavingsForProfile } from '@/lib/recommendation';
@@ -82,41 +81,17 @@ async function handleDigest(request: NextRequest) {
     let compoundMatchesDelivered = 0;
 
     // R6: compound rules evaluate against the same event stream, in the same
-    // tick. Email-channel rules owned by batch recipients get a digest
-    // section; webhook-channel rules stay on-demand (test endpoint), matching
-    // how the existing system delivers webhooks (test/redrive, never cron).
-    const compoundByOwner = new Map<string, Array<{ ruleId: number | string; ruleName: string; matches: Array<{ model_id: string; event_type: string; detected_at: string; reasons: string[] }> }>>();
-    try {
-      const compoundRules = await listActiveCompoundRulesByOwnerEmails(batch);
-      if (compoundRules.length > 0) {
-        const evaluated = evaluateCompoundRules(
-          eventsRes.events,
-          compoundRules.map((r) => ({ id: r.id, name: r.name, logic: r.logic, conditions: r.conditions })),
-          snapshotsMap
-        );
-        const nameById = new Map(compoundRules.map((r) => [r.id, { name: r.name, email: r.owner_email }]));
-        for (const ev of evaluated) {
-          const meta = nameById.get(Number(ev.ruleId));
-          if (!meta) continue;
-          const key = meta.email.toLowerCase();
-          const list = compoundByOwner.get(key) || [];
-          list.push({
-            ruleId: ev.ruleId,
-            ruleName: ev.ruleName,
-            matches: ev.matches.slice(0, 5).map((m) => ({
-              model_id: m.event.model_id,
-              event_type: m.event.event_type,
-              detected_at: m.event.detected_at,
-              reasons: m.reasons,
-            })),
-          });
-          compoundByOwner.set(key, list);
-        }
-      }
-    } catch (hookErr) {
-      // Compound matching must never fail the digest itself.
-      logger.warn('Compound-rule digest hook failed:', { error: String(hookErr) });
-    }
+    // tick (extracted to lib/compound-digest.ts). Email-channel rules owned
+    // by batch recipients get a digest section; webhook-channel rules stay
+    // on-demand (test endpoint), matching how the existing system delivers
+    // webhooks (test/redrive, never cron).
+    const { byOwner: compoundByOwner, hookError: compoundHookError } =
+      await evaluateCompoundForDigest({
+        events: eventsRes.events,
+        snapshots: snapshotsMap,
+        batchEmails: batch,
+        listRules: listActiveCompoundRulesByOwnerEmails,
+      });
 
     for (const email of batch) {
       const userWatchlist = await getUserWatchlistByEmail(email);
@@ -168,20 +143,9 @@ async function handleDigest(request: NextRequest) {
         briefs: [brief],
       });
 
-      const compoundSections = compoundByOwner.get(email.toLowerCase()) || [];
-      if (compoundSections.length > 0) {
-        const section = compoundSections
-          .map(
-            (s) => `
-      <div class="section">
-        <div class="section-title">Compound rule: ${escapeHtml(s.ruleName)}</div>
-        ${s.matches.map((m) => `<div class="event-card"><div class="model-name">${escapeHtml(m.model_id)}</div><div style="font-size:12px;color:#93C5FD;">${escapeHtml(m.event_type)} — ${escapeHtml(m.reasons.join('; '))}</div></div>`).join('')}
-      </div>`
-          )
-          .join('');
-        html = html.replace('</body>', `${section}</body>`);
-        compoundMatchesDelivered += compoundSections.reduce((n, s) => n + s.matches.length, 0);
-      }
+      const appended = appendCompoundSections(html, compoundByOwner.get(email.toLowerCase()) || []);
+      html = appended.html;
+      compoundMatchesDelivered += appended.delivered;
 
       const result = await sendEmailDigest({
         to: email,
@@ -204,6 +168,7 @@ async function handleDigest(request: NextRequest) {
       deliveredCount,
       briefsDelivered: deliveredCount,
       compoundMatchesDelivered,
+      compoundHookError,
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {

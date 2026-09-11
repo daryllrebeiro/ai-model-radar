@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { getLatestSnapshotsMap, getEvents } from '@/lib/db/queries';
+import { getEvents } from '@/lib/db/queries';
+import { getCachedSnapshotsMap } from '@/lib/catalog-cache';
 import { getPriceDropForecasts } from '@/lib/forecast';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
   const minProbability = Number.isFinite(rawMin) ? Math.min(1, Math.max(0, rawMin)) : 0.35;
 
   const [snapshotsMap, eventsRes] = await Promise.all([
-    getLatestSnapshotsMap(),
+    getCachedSnapshotsMap(),
     getEvents({ limit: 500 }),
   ]);
 

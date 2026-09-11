@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { isPostgres, getPgPool, getLocalState, saveLocalState } from '../src/lib/db/client';
+import { TABLE_MANIFEST, localStateKeys } from '../src/lib/db/tables';
 import { logger } from '../src/lib/logger';
 
 const MIGRATIONS_DIR = path.join(process.cwd(), 'migrations');
@@ -18,37 +19,9 @@ const SCHEMA_PATH = path.join(process.cwd(), 'src', 'lib', 'db', 'schema.sql');
 // migration backup: npm run db:backup before, npm run db:restore afterwards.
 // Never hand-edit schema_migrations; use migrationStatus() to inspect state.
 
-const EXPECTED_TABLES = [
-  'model_snapshots',
-  'model_events',
-  'ingestion_runs',
-  'api_keys',
-  'digest_deliveries',
-  'users',
-  'user_watchlists',
-  'alert_rules',
-  'teams',
-  'team_members',
-  'team_watchlists',
-  'usage_profiles',
-  'endpoint_telemetry',
-  'budget_rules',
-  'budget_alerts',
-    'migration_approvals',
-    'processed_stripe_event_ids',
-    'fk_orphans',
-    'shadow_ai_findings',
-    'approval_votes',
-    'webhook_dlq',
-    'model_eol',
-    'eval_runs',
-    'usage_imports',
-    'compound_rules',
-    'case_studies',
-    'export_connectors',
-    'routing_attempts',
-    'routing_pilot_optins',
-  ];
+// Single manifest is the source of truth (src/lib/db/tables.ts) —
+// add tables there, never here. Exported for the drift-guard test.
+export const EXPECTED_TABLES: string[] = TABLE_MANIFEST.map((t) => t.pg);
 
 async function ensureSchemaMigrationsTable(pool: any): Promise<void> {
   await pool.query(`
@@ -151,14 +124,11 @@ export async function runMigrations(): Promise<{ success: boolean; tablesCreated
   } else {
     logger.info('Initializing local file database schema...');
     const state = getLocalState();
-    if (!state.snapshots) state.snapshots = [];
-    if (!state.events) state.events = [];
-    if (!state.ingestion_runs) state.ingestion_runs = [];
-    if (!state.api_keys) state.api_keys = [];
-    if (!state.digest_deliveries) state.digest_deliveries = [];
-    if (!state.users) state.users = [];
-    if (!state.user_watchlists) state.user_watchlists = [];
-    if (!(state as any).alert_rules) (state as any).alert_rules = [];
+    // Initialize EVERY manifest key (the old code set 8 and left new tables
+    // to lazy creation — a read-before-first-write on a fresh local DB).
+    for (const key of localStateKeys()) {
+      if (!Array.isArray((state as any)[key])) (state as any)[key] = [];
+    }
     saveLocalState(state);
     logger.info('Local file database initialized with all tables.');
   }

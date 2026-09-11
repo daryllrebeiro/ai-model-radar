@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { getLatestSnapshotsMap, getEvents, upsertUsageProfile, getUsageProfileByEmail, UsageProfile } from '@/lib/db/queries';
+import { getEvents, upsertUsageProfile, getUsageProfileByEmail, UsageProfile } from '@/lib/db/queries';
+import { getCachedSnapshotsMap } from '@/lib/catalog-cache';
 import { buildRecommendations, UsageProfileInput } from '@/lib/recommendation';
 import { detectMarketSignals } from '@/lib/signals';
 import { validatePublicApiRequest, apiJsonResponse, assertPayloadSize } from '@/lib/api-auth';
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
   }
 
   const [snapshotsMap, eventsRes] = await Promise.all([
-    getLatestSnapshotsMap(),
+    getCachedSnapshotsMap(),
     getEvents({ limit: 500 }),
   ]);
   const snapshots = Array.from(snapshotsMap.values());

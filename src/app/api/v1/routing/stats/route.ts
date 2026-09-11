@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 import { handleApiError } from '@/lib/api-error-handler';
 import { getRoutingReliability, checkRoutingPilot } from '@/lib/db/queries';
+import { checkRoutingSLO } from '@/lib/routing/slo';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,7 +25,15 @@ export async function GET(request: NextRequest) {
     const raw = Number(searchParams.get('hours') || '24');
     const hours = Number.isFinite(raw) ? Math.min(24 * 30, Math.max(1, Math.floor(raw))) : 24;
     const reliability = await getRoutingReliability(hours);
-    return apiJsonResponse({ version: 'v1', generated_at: new Date().toISOString(), ...reliability }, auth.rateLimitHeaders);
+    return apiJsonResponse(
+      {
+        version: 'v1',
+        generated_at: new Date().toISOString(),
+        ...reliability,
+        slo: checkRoutingSLO(reliability),
+      },
+      auth.rateLimitHeaders
+    );
   } catch (err: any) {
     return handleApiError(err, 'routing/stats GET');
   }

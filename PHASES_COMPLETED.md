@@ -81,6 +81,37 @@ Conversational copilot over the full radar dataset with cited answers, plus sche
   errors; gate verified to bite on a planted type error. Dual-mode runs additionally forced
   governance FK-correct fixtures and unique team names in tests.
 
+## Phase 2 — Architectural Scaling & Performance ✅ COMPLETE
+P2 roadmap batch (review02): route thinning, hot-path cache, table manifest,
+parallel tests/coverage, reliability (SLO watch, deadlines, DLQ).
+- Route thinning: `src/lib/routing/forward.ts` (single-attempt forward +
+  fail-open shaping + audit) and `src/lib/compound-digest.ts` (hook eval +
+  escaped render + `compoundHookError` in digest JSON); chat route 358→~290
+  lines with zero behavior change (r10/router/digest suites green).
+- Catalog TTL cache (`src/lib/catalog-cache.ts`, default 5min,
+  `CATALOG_CACHE_TTL_MS=0` disables): 8 staleness-tolerant read routes
+  (arbitrage×2, stream, signals, recommend, forecast, ask, backtest) off the
+  full-scan path. Money/decision paths (runner, routing, digest, probes,
+  governance, reconcile, alert-eval) stay uncached by design.
+- Table manifest (`src/lib/db/tables.ts`): backup/restore/migrate import one
+  29-table manifest; `tests/table-manifest.test.ts` fails on drift (order,
+  serial flags, local keys, literal scan). Also fixed migrate.ts local init
+  to hydrate all keys and extended CI cleanup to all tables.
+- Test velocity: per-worker local JSON backends (`VITEST_POOL_ID`) +
+  `npm run test:parallel` (proven 15/15); `@vitest/coverage-v8` with
+  `npm run test:coverage` (60/60/55/60 thresholds on `src/lib`).
+- Reliability: hourly `routing-slo.yml` watch (1h success ≥99%, p95 <250ms —
+  pages via run failure); R8 30s overall deadline + `deadlineExceeded`;
+  `withTimeout` enforced in `runConnector`; failed export runs park DLQ rows
+  (`export:<id>`) with `dlq_id` in the response.
+- PgBouncer evaluation: deferred — pool (`max:10`, 5s/15s timeouts) is
+  adequate at current burst profile; trigger is max_connections pressure or
+  first cold-start exhaustion incident, at which point adopt the managed
+  pooler (Supabase/Vercel) before self-hosting PgBouncer. Pool-gauge metrics
+  remain the missing prerequisite for a data-driven call.
+- k6: thresholds (p95<200ms, errors<1%) already fail the nightly run, which
+  IS the paging path via notifications — kept as-is deliberately.
+
 ## Post-Phase 6 hardening (whole-roadmap Definition of Done)
 - Deploy surface (`vercel.json`): `/api/cron/poll` hourly, `/api/cron/probes` hourly (:15),
   `/api/cron/digest` daily 07:00 UTC + `?timeframe=weekly` Mondays 08:00 UTC.

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { isPostgres, getPgPool, getLocalState } from '../src/lib/db/client';
+import { RESTORE_ORDER } from '../src/lib/db/tables';
 import { logger } from '../src/lib/logger';
 
 export interface BackupManifest {
@@ -29,45 +30,12 @@ export async function createDatabaseBackup(outputDir = path.join(process.cwd(), 
 
   if (isPostgres()) {
     const pool = getPgPool();
-    // Canonical table order: FK parents before children, so a restore can
-    // replay the dump top-down without violating constraints. Every table
-    // must be listed — omitting a parent (e.g. teams) makes dumps containing
-    // child rows (e.g. budget_rules.team_id) unrestorable.
-    //   users -> {teams, user_watchlists, usage_profiles}
-    //   teams -> {team_members, team_watchlists, budget_rules}
-    //   budget_rules -> {budget_alerts, migration_approvals}
-    const tables = [
-      'users',
-      'teams',
-      'user_watchlists',
-      'usage_profiles',
-      'team_members',
-      'team_watchlists',
-      'budget_rules',
-      'budget_alerts',
-      'shadow_ai_findings',
-        'migration_approvals',
-        'approval_votes',
-        'webhook_dlq',
-        'model_eol',
-        'eval_runs',
-        'usage_imports',
-        'compound_rules',
-        'case_studies',
-        'export_connectors',
-        'routing_attempts',
-        'routing_pilot_optins',
-      // FK-independent tables (order irrelevant, kept stable for diffability)
-      'model_snapshots',
-      'model_events',
-      'ingestion_runs',
-      'api_keys',
-      'digest_deliveries',
-      'alert_rules',
-      'endpoint_telemetry',
-      'processed_stripe_event_ids',
-      'fk_orphans',
-    ];
+    // Canonical table order from the single manifest (TABLE_MANIFEST):
+    // FK parents before children, so a restore can replay the dump
+    // top-down without violating constraints.
+    // NOTE: table list lives in src/lib/db/tables.ts (TABLE_MANIFEST) —
+    // add tables there, never here.
+    const tables = RESTORE_ORDER;
     for (const table of tables) {
       try {
         const res = await pool.query(`SELECT * FROM ${table}`);

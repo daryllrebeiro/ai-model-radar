@@ -6,8 +6,10 @@ import {
   markConnectorRun,
 } from '@/lib/db/queries';
 import { getEvents } from '@/lib/db/queries';
-import { runExportConnector } from '@/lib/export-connectors';
+import { runExportConnector, DATADOG_DEFAULT_URL } from '@/lib/export-connectors';
+import { enqueueDlqDelivery } from '@/lib/db/queries';
 import { trackServerEvent } from '@/lib/analytics';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,8 +50,31 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       events,
     });
     await markConnectorRun(id, result.success ? 'success' : 'failed');
+    // P2 DLQ coverage: terminal export failures park for manual redrive
+    // (same queue as webhooks, namespaced rule id). Never fails the run.
+    let dlqId: number | null = null;
+    if (!result.success) {
+      try {
+        const parked = await enqueueDlqDelivery({
+          delivery_id: `export-${id}-${Date.now().toString(36)}`,
+          rule_id: `export:${id}`,
+          destination_url: connector.destination_url || (connector.type === 'datadog' ? DATADOG_DEFAULT_URL : ''),
+          payload: JSON.stringify({
+            connector_id: id,
+            connector_type: connector.type,
+            events_attempted: events.length,
+            events_pushed: result.pushed,
+            error: result.error || 'unknown',
+          }).slice(0, 20000),
+          last_error: result.error || 'export failed',
+        });
+        dlqId = parked.id ?? null;
+      } catch (dlqErr) {
+        logger.warn('Export DLQ enqueue failed:', { error: String(dlqErr) });
+      }
+    }
     if (result.success) trackServerEvent('export_connector_run');
-    return NextResponse.json({ connector_id: id, type: connector.type, ...result });
+    return NextResponse.json({ connector_id: id, type: connector.type, dlq_id: dlqId, ...result });
   } catch (err: any) {
     return handleApiError(err, 'exports/[id]/run POST');
   }

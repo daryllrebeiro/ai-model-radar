@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { getLatestSnapshotsMap, getEvents } from '@/lib/db/queries';
+import { getEvents } from '@/lib/db/queries';
+import { getCachedSnapshotsMap } from '@/lib/catalog-cache';
 import { runBacktest } from '@/lib/backtest';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
   const rawMin = Number(params.get('min_probability') || '0.35');
   const minProbability = Number.isFinite(rawMin) ? Math.min(1, Math.max(0, rawMin)) : 0.35;
 
-  const snapshotsMap = await getLatestSnapshotsMap();
+  const snapshotsMap = await getCachedSnapshotsMap();
   const snapshots = Array.from(snapshotsMap.values());
 
   // Bounded history fetch: cursor pages over cut + release events only.

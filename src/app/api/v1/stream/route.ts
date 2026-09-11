@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { getEvents, getLatestSnapshotsMap } from '@/lib/db/queries';
+import { getEvents } from '@/lib/db/queries';
+import { getCachedSnapshotsMap } from '@/lib/catalog-cache';
 import { validatePublicApiRequest, getClientIp } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
 import { streamSlotAcquire, streamSlotRelease } from '@/lib/stream-slots';
@@ -79,7 +80,7 @@ export async function GET(request: NextRequest) {
         // Initial snapshot: recent events + market scope
         const [eventsRes, snapshotsMap] = await Promise.all([
           getEvents({ limit: 100 }),
-          getLatestSnapshotsMap(),
+          getCachedSnapshotsMap(),
         ]);
         const initialEvents = [...eventsRes.events].reverse();
         lastSeenEventId = initialEvents.reduce((max, e) => Math.max(max, e.id || 0), 0);

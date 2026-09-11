@@ -5,82 +5,21 @@ import { isPostgres, getPgPool, saveLocalState } from '../src/lib/db/client';
 import { bulkInsert } from '../src/lib/db/queries';
 import { logger } from '../src/lib/logger';
 
-// Canonical restore order: FK parents before children, independent of the
-// key order inside the dump file. Must mirror the backup table order —
-// inserting a child (budget_rules) before its parent (teams) violates FK
-// constraints, and interleaved per-table TRUNCATE ... CASCADE wipes
-// already-restored parent rows out from under later child inserts.
-const RESTORE_ORDER = [
-    'users',
-    'teams',
-    'user_watchlists',
-    'usage_profiles',
-    'team_members',
-    'team_watchlists',
-    'budget_rules',
-    'budget_alerts',
-    'shadow_ai_findings',
-    'migration_approvals',
-    'approval_votes',
-    'webhook_dlq',
-    'model_eol',
-    'eval_runs',
-    'usage_imports',
-    'compound_rules',
-    'case_studies',
-    'export_connectors',
-    'routing_attempts',
-    'routing_pilot_optins',
-    'model_snapshots',
-    'model_events',
-    'ingestion_runs',
-    'api_keys',
-    'digest_deliveries',
-    'alert_rules',
-    'endpoint_telemetry',
-    'processed_stripe_event_ids',
-    'fk_orphans',
-  ];
+// Canonical restore order + serial tables now live in the single manifest
+// (src/lib/db/tables.ts) — add tables there, never here. Must mirror the
+// backup table order (both import the same manifest, so they agree by
+// construction).
+import { RESTORE_ORDER as MANIFEST_ORDER, SERIAL_TABLES as MANIFEST_SERIALS, TABLE_MANIFEST } from '../src/lib/db/tables';
+const RESTORE_ORDER = MANIFEST_ORDER;
 
-// Tables with SERIAL/BIGSERIAL primary keys whose sequences must be
-// advanced past the restored ids, otherwise the next app INSERT reuses an
-// existing id and fails on duplicate primary key.
-const SERIAL_TABLES = new Set([
-    'users',
-    'teams',
-    'user_watchlists',
-    'usage_profiles',
-    'team_members',
-    'team_watchlists',
-    'budget_rules',
-    'budget_alerts',
-    'shadow_ai_findings',
-    'migration_approvals',
-    'approval_votes',
-    'webhook_dlq',
-    'model_eol',
-    'eval_runs',
-    'usage_imports',
-    'compound_rules',
-    'case_studies',
-    'export_connectors',
-    'routing_attempts',
-    'routing_pilot_optins',
-    'model_snapshots',
-      'model_events',
-      'ingestion_runs',
-      'api_keys',
-      'digest_deliveries',
-      'alert_rules',
-      'endpoint_telemetry',
-      'fk_orphans',
-    ]);
+// Sequences must be advanced past restored ids or the next app INSERT
+// reuses an existing id and fails on duplicate primary key.
+const SERIAL_TABLES = MANIFEST_SERIALS;
 
 const VALID_TABLES = new Set([
   ...RESTORE_ORDER,
-  // Local file state keys (used by backup-db.ts in local mode)
-  'snapshots',
-  'events',
+  // Local file state keys where they differ from pg names (manifest-driven).
+  ...TABLE_MANIFEST.filter((t) => t.local !== t.pg).map((t) => t.local),
 ]);
 
 /**

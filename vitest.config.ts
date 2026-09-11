@@ -4,7 +4,24 @@ import path from 'path';
 export default defineConfig({
   test: {
     globals: true,
-    fileParallelism: false, // Required for local JSON fallback mode (no DATABASE_URL)
+    // Serial by default: the local JSON backend is single-writer. Pass
+    // --fileParallelism (npm run test:parallel, local mode only) to fan out —
+    // each worker then gets its own .radar-data-worker-<id>.json via
+    // VITEST_POOL_ID (see db/client.ts). Postgres mode stays serial:
+    // parallel files would share tables without isolated schemas.
+    fileParallelism: false,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      include: ['src/lib/**/*.ts'],
+      // Ratchet thresholds on the engine/domain layer (P2). Raise deliberately.
+      thresholds: {
+        lines: 60,
+        functions: 60,
+        branches: 55,
+        statements: 60,
+      },
+    },
   },
   resolve: {
     alias: {

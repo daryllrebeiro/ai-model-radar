@@ -98,7 +98,23 @@ interface LocalDbState {
   routing_pilot_optins: Array<any>;
 }
 
-const LOCAL_DB_PATH = path.join(process.cwd(), '.radar-data.json');
+/**
+ * P2 parallel-test support: per-worker file backends. Under
+ * `vitest run --fileParallelism`, each worker gets VITEST_POOL_ID, so each
+ * worker gets its own JSON file instead of racing on one. Explicit
+ * RADAR_DATA_PATH wins; Postgres mode is unaffected (still serial there —
+ * workers would share tables).
+ */
+function localDbPath(): string {
+  if (process.env.RADAR_DATA_PATH) return process.env.RADAR_DATA_PATH;
+  const worker = process.env.VITEST_POOL_ID;
+  if (worker) {
+    return path.join(process.cwd(), `.radar-data-worker-${worker}.json`);
+  }
+  return path.join(process.cwd(), '.radar-data.json');
+}
+
+const LOCAL_DB_PATH = localDbPath();
 
 function emptyState(): LocalDbState {
   return {

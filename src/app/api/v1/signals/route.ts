@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { getLatestSnapshotsMap, getEvents } from '@/lib/db/queries';
+import { getEvents } from '@/lib/db/queries';
+import { getCachedSnapshotsMap } from '@/lib/catalog-cache';
 import { detectMarketSignals } from '@/lib/signals';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 import { requireFeature } from '@/lib/access-guard';
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
   const limit = Number.isFinite(rawLimit) ? Math.min(50, Math.max(1, Math.floor(rawLimit))) : 20;
 
   const [snapshotsMap, eventsRes] = await Promise.all([
-    getLatestSnapshotsMap(),
+    getCachedSnapshotsMap(),
     getEvents({ limit: 500 }),
   ]);
 

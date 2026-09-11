@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { getLatestSnapshotsMap } from '@/lib/db/queries';
+import { getCachedSnapshotsMap } from '@/lib/catalog-cache';
 import { computeArbitrageOpportunities } from '@/lib/arbitrage';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 
@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     return auth.errorResponse;
   }
 
-  const snapshotsMap = await getLatestSnapshotsMap();
+  const snapshotsMap = await getCachedSnapshotsMap();
   const snapshots = Array.from(snapshotsMap.values());
   const opportunities = computeArbitrageOpportunities(snapshots);
 

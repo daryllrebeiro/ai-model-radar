@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getLatestSnapshotsMap } from '@/lib/db/queries';
+import { getCachedSnapshotsMap } from '@/lib/catalog-cache';
 import { computeArbitrageOpportunities } from '@/lib/arbitrage';
 import { requireFeature } from '@/lib/access-guard';
 import { checkSessionRateLimit } from '@/lib/api-auth';
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     const limited = await checkSessionRateLimit(session.user.id, 'arbitrage');
     if (limited) return limited;
 
-    const snapshotsMap = await getLatestSnapshotsMap();
+    const snapshotsMap = await getCachedSnapshotsMap();
     const snapshots = Array.from(snapshotsMap.values());
     const opportunities = computeArbitrageOpportunities(snapshots);
 

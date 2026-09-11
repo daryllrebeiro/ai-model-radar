@@ -1,0 +1,38 @@
+name: Routing Pilot SLO Watch
+
+# P2 paging for the R10 reliability bar: fails (and therefore notifies)
+# when 1h pilot success < 99% or p95 added overhead > 250ms.
+# Requires secrets: STAGING_URL (radar base), ROUTING_STATS_KEY (pilot key).
+on:
+  schedule:
+    # Hourly — the SLO window itself is 1h
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+jobs:
+  routing-slo:
+    name: Check pilot routing SLO
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query routing stats and enforce SLO
+        run: |
+          node -e "
+            (async () => {
+              const base = process.env.STAGING_URL;
+              const key = process.env.ROUTING_STATS_KEY;
+              if (!base || !key) { console.log('SLO watch skipped: STAGING_URL/ROUTING_STATS_KEY unset'); process.exit(0); }
+              const res = await fetch(base.replace(/\/$/, '') + '/api/v1/routing/stats?hours=1', {
+                headers: { Authorization: 'Bearer ' + key },
+              });
+              if (!res.ok) { console.error('stats endpoint HTTP ' + res.status); process.exit(1); }
+              const body = await res.json();
+              console.log(JSON.stringify({ attempts: body.attempts, success_rate: body.success_rate, p95: body.p95_latency_ms, slo: body.slo }));
+              if (!body.slo) { console.error('no slo block in response'); process.exit(1); }
+              if (body.slo.breached) { console.error('ROUTING SLO BREACH: ' + body.slo.reasons.join('; ')); process.exit(1); }
+              console.log('routing SLO within bar');
+            })().catch((e) => { console.error(e); process.exit(1); });
+          "
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          ROUTING_STATS_KEY: ${{ secrets.ROUTING_STATS_KEY }}

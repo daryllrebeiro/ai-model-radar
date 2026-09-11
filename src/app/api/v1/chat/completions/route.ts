@@ -7,10 +7,9 @@ import {
   getLatestSnapshotsMap,
   recordBudgetAlert,
   upsertShadowFinding,
-  recordRoutingAttempt,
   checkRoutingPilot,
-  hashOwnerEmail,
 } from '@/lib/db/queries';
+import { forwardToUpstream, buildFailOpenBody, logRoutingAttempt } from '@/lib/routing/forward';
 import { validatePublicApiRequest } from '@/lib/api-auth';
 import { hasAccess, normalizeTier } from '@/lib/feature-flags';
 import { logger } from '@/lib/logger';
@@ -210,8 +209,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (!selectedModel) {
-      await logAttempt({
-        auth, requested: modelHint || '(policy)', selected: '(none)', policy: policyUsed,
+      await logRoutingAttempt({
+        ownerEmail: auth.ownerEmail, requested: modelHint || '(policy)', selected: '(none)', policy: policyUsed,
         upstreamStatus: null, latencyMs: Date.now() - t0, success: false, error: 'No suitable model matching policy constraints',
       });
       return NextResponse.json(
@@ -224,8 +223,8 @@ export async function POST(request: NextRequest) {
     const upstreamBase = (process.env.ROUTING_UPSTREAM_BASE || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
     const upstreamKey = process.env.ROUTING_UPSTREAM_KEY;
     if (!upstreamKey) {
-      await logAttempt({
-        auth, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
+      await logRoutingAttempt({
+        ownerEmail: auth.ownerEmail, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
         upstreamStatus: null, latencyMs: Date.now() - t0, success: false, error: 'No upstream configured',
       });
       return NextResponse.json(
@@ -234,125 +233,58 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Forward once. No retries on timeout/5xx: a retry could double-bill.
-    const overheadMark = Date.now();
+    // Single-attempt forward + explicit fail-open live in lib/routing/forward.ts.
     const { routing_policy, fallback_models, on_failure, ...passthrough } = body as Record<string, unknown>;
     void routing_policy; void fallback_models;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 55000);
-    let upstreamRes: Response | null = null;
-    let upstreamErr: string | null = null;
-    try {
-      upstreamRes = await fetch(`${upstreamBase}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${upstreamKey}`,
-          'User-Agent': 'AI-Model-Radar/1.0 Router-Pilot',
-        },
-        body: JSON.stringify({ ...passthrough, model: selectedModel.model_id }),
-        signal: controller.signal,
-      });
-    } catch (err: any) {
-      upstreamErr = err?.name === 'AbortError' ? 'Upstream timeout' : err?.message || 'Upstream unreachable';
-    } finally {
-      clearTimeout(timeout);
-    }
-    const overheadMs = Date.now() - overheadMark;
+    const fwd = await forwardToUpstream({
+      ownerEmail: auth.ownerEmail,
+      upstreamBase,
+      upstreamKey,
+      body: passthrough,
+      selectedModelId: selectedModel.model_id,
+    });
 
-    if (!upstreamRes || !upstreamRes.ok) {
-      const status = upstreamRes ? upstreamRes.status : null;
-      const errText = upstreamErr || `Upstream HTTP ${status}`;
+    if (!fwd.ok) {
+      const errText = fwd.error || 'Upstream provider failed.';
       if (on_failure === 'fail_open_original' && modelHint) {
-        // Explicit fail-open: shape-compatible fallback naming the ORIGINAL
-        // model. No substitution, no fabricated completion — explicit.
-        await logAttempt({
-          auth, requested: modelHint, selected: modelHint, policy: `${policyUsed}+fail_open`,
-          upstreamStatus: status, latencyMs: Date.now() - t0, success: false, error: errText,
+        await logRoutingAttempt({
+          ownerEmail: auth.ownerEmail, requested: modelHint, selected: modelHint, policy: `${policyUsed}+fail_open`,
+          upstreamStatus: fwd.status, latencyMs: Date.now() - t0, success: false, error: errText,
         });
-        return NextResponse.json(
-          {
-            id: `chatcmpl-fallback-${Date.now()}`,
-            object: 'chat.completion',
-            created: Math.floor(Date.now() / 1000),
-            model: modelHint,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: 'assistant',
-                  content: 'Upstream unavailable — retry this request directly against the requested model.',
-                },
-                finish_reason: 'stop',
-              },
-            ],
-            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-            proxy_fallback: true,
-            proxy_error: errText,
+        return NextResponse.json(buildFailOpenBody(modelHint, errText), {
+          headers: {
+            ...auth.rateLimitHeaders,
+            'X-Radar-Proxy-Fallback': '1',
+            'X-Radar-Overhead-Ms': String(fwd.overheadMs),
           },
-          {
-            headers: {
-              ...auth.rateLimitHeaders,
-              'X-Radar-Proxy-Fallback': '1',
-              'X-Radar-Overhead-Ms': String(overheadMs),
-            },
-          }
-        );
+        });
       }
-      await logAttempt({
-        auth, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
-        upstreamStatus: status, latencyMs: Date.now() - t0, success: false, error: errText,
+      await logRoutingAttempt({
+        ownerEmail: auth.ownerEmail, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
+        upstreamStatus: fwd.status, latencyMs: Date.now() - t0, success: false, error: errText,
       });
       return NextResponse.json(
         { error: 'Upstream provider failed.', detail: errText, retry_direct_model: modelHint || undefined },
         {
-          status: status === 429 ? 429 : 502,
-          headers: { ...auth.rateLimitHeaders, 'X-Radar-Overhead-Ms': String(overheadMs) },
+          status: fwd.status === 429 ? 429 : 502,
+          headers: { ...auth.rateLimitHeaders, 'X-Radar-Overhead-Ms': String(fwd.overheadMs) },
         }
       );
     }
 
-    const payload = await upstreamRes.json().catch(() => null);
-    await logAttempt({
-      auth, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
-      upstreamStatus: upstreamRes.status, latencyMs: Date.now() - t0, success: true,
+    await logRoutingAttempt({
+      ownerEmail: auth.ownerEmail, requested: modelHint || '(policy)', selected: selectedModel.model_id, policy: policyUsed,
+      upstreamStatus: fwd.status, latencyMs: Date.now() - t0, success: true,
     });
-    return NextResponse.json(payload, {
+    return NextResponse.json(fwd.payload, {
       headers: {
         ...auth.rateLimitHeaders,
         ...(substituted ? { 'X-Radar-Routed-Model': selectedModel.model_id } : {}),
-        'X-Radar-Overhead-Ms': String(overheadMs),
+        'X-Radar-Overhead-Ms': String(fwd.overheadMs),
       },
     });
   } catch (error: any) {
     logger.error('Chat completion error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-}
-
-async function logAttempt(input: {
-  auth: { ownerEmail?: string };
-  requested: string;
-  selected: string;
-  policy: string;
-  upstreamStatus: number | null;
-  latencyMs: number;
-  success: boolean;
-  error?: string;
-}): Promise<void> {
-  try {
-    await recordRoutingAttempt({
-      key_prefix: null,
-      owner_email_hash: hashOwnerEmail(input.auth.ownerEmail),
-      requested_model: input.requested,
-      selected_model: input.selected,
-      policy: input.policy,
-      upstream_status: input.upstreamStatus,
-      latency_ms: input.latencyMs,
-      success: input.success,
-      error: input.error || null,
-    });
-  } catch (err) {
-    logger.warn('Routing attempt audit failed:', { error: String(err) });
   }
 }
