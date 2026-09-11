@@ -18,7 +18,6 @@ afterEach(() => {
   process.env = { ...savedEnv };
 });
 
-const ENC_KEY = 'audit10-test-connector-key-sufficiently-long';
 const ENC_KEYS = 'v2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 async function keyFor(email: string) {
