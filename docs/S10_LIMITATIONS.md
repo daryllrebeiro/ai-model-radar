@@ -105,6 +105,7 @@ anti-gaming maintenance — not just a form and a chart.
 | Date | Decision | By whom |
 |---|---|---|
 | 2026-09-11 | S10 HELD — no code, no estimates, pending §3 sign-off | Product (this doc is the record) |
+| 2026-09-11 | Vote NOT held — no legal/business counterparty in-session; HELD reaffirmed, not decided. To schedule: name the legal reviewer, circulate §3 package, record vote here | Engineering (status record, not a vote) |
 | — | ADR-level go/no-go | *pending* |
 | — | Threshold number + bounds documented | *pending* |
 
