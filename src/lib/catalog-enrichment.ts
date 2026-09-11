@@ -8,15 +8,19 @@
 import { ModelCurrent } from '@/types/models';
 import { findCapabilityForModel } from './capabilities';
 import { findLicenseForModel } from './licenses';
+import { findComplianceForModel } from './compliance';
+import { classifyModelCategory, findEmbeddingForModel, findEmbeddingBenchmark } from './embeddings';
 
 export interface AttributeFilters {
   toolCalling?: boolean;
   vision?: boolean;
   commercial?: boolean;
+  hipaaEligible?: boolean;
+  euResidency?: boolean;
 }
 
 export function hasAttributeFilters(f: AttributeFilters): boolean {
-  return f.toolCalling !== undefined || f.vision !== undefined || f.commercial !== undefined;
+  return f.toolCalling !== undefined || f.vision !== undefined || f.commercial !== undefined || f.hipaaEligible !== undefined || f.euResidency !== undefined;
 }
 
 /** Attribute filters join sourced static datasets — no DB column. */
@@ -26,6 +30,8 @@ export function applyAttributeFilters(models: ModelCurrent[], f: AttributeFilter
     if (f.toolCalling !== undefined && findCapabilityForModel(m.model_id)?.tool_calling !== f.toolCalling) return false;
     if (f.vision !== undefined && findCapabilityForModel(m.model_id)?.vision !== f.vision) return false;
     if (f.commercial !== undefined && (findLicenseForModel(m.model_id)?.commercial_use_allowed === true) !== f.commercial) return false;
+    if (f.hipaaEligible !== undefined && findComplianceForModel(m.model_id)?.hipaa_eligible !== f.hipaaEligible) return false;
+    if (f.euResidency !== undefined && findComplianceForModel(m.model_id)?.eu_data_residency !== f.euResidency) return false;
     return true;
   });
 }
@@ -33,6 +39,10 @@ export function applyAttributeFilters(models: ModelCurrent[], f: AttributeFilter
 export type EnrichedModel = ModelCurrent & {
   capabilities: ReturnType<typeof findCapabilityForModel>;
   license: ReturnType<typeof findLicenseForModel>;
+  compliance: ReturnType<typeof findComplianceForModel>;
+  category: ReturnType<typeof classifyModelCategory>;
+  embedding: ReturnType<typeof findEmbeddingForModel>;
+  embeddingBenchmark: ReturnType<typeof findEmbeddingBenchmark>;
 };
 
 export function enrichModels(models: ModelCurrent[]): EnrichedModel[] {
@@ -40,5 +50,16 @@ export function enrichModels(models: ModelCurrent[]): EnrichedModel[] {
     ...m,
     capabilities: findCapabilityForModel(m.model_id),
     license: findLicenseForModel(m.model_id),
+    compliance: findComplianceForModel(m.model_id),
+    category: classifyModelCategory(m.model_id),
+    embedding: findEmbeddingForModel(m.model_id),
+    embeddingBenchmark: findEmbeddingBenchmark(m.model_id),
   }));
+}
+
+/** S9 category filter — applied post-query like attribute filters. */
+export function applyCategoryFilter(models: ModelCurrent[], category?: string): ModelCurrent[] {
+  if (!category || category === 'all') return models;
+  if (category !== 'chat' && category !== 'embedding') return models;
+  return models.filter((m) => classifyModelCategory(m.model_id) === category);
 }

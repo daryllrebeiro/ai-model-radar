@@ -6,9 +6,11 @@
 import { RAW_BENCHMARK_DATA, BENCHMARK_SOURCES_VERIFIED } from './benchmarks';
 import { RAW_CAPABILITY_DATA } from './capabilities';
 import { RAW_LICENSE_DATA } from './licenses';
+import { RAW_COMPLIANCE_DATA, RAW_COMPLIANCE_OVERRIDES } from './compliance';
+import { RAW_EMBEDDING_DATA, RAW_EMBEDDING_BENCHMARKS } from './embeddings';
 
 export interface SourceRef {
-  dataset: 'benchmarks' | 'capabilities' | 'licenses';
+  dataset: 'benchmarks' | 'capabilities' | 'licenses' | 'compliance' | 'embeddings';
   model_id: string;
   source_name: string;
   source_url: string;
@@ -37,6 +39,34 @@ export function collectSources(): SourceRef[] {
       source_name: r.source_name,
       source_url: r.source_url,
       verified_date: r.verified_date,
+    })),
+    ...RAW_COMPLIANCE_DATA.map((r) => ({
+      dataset: 'compliance' as const,
+      model_id: `provider:${r.provider}`,
+      source_name: r.source_name,
+      source_url: r.source_url,
+      verified_date: r.verified_date,
+    })),
+    ...RAW_COMPLIANCE_OVERRIDES.map((r) => ({
+      dataset: 'compliance' as const,
+      model_id: r.model_id,
+      source_name: r.source_name,
+      source_url: r.source_url,
+      verified_date: r.verified_date,
+    })),
+    ...RAW_EMBEDDING_DATA.map((r) => ({
+      dataset: 'embeddings' as const,
+      model_id: r.model_id,
+      source_name: r.source_name,
+      source_url: r.source_url,
+      verified_date: r.verified_date,
+    })),
+    ...RAW_EMBEDDING_BENCHMARKS.map((r) => ({
+      dataset: 'embeddings' as const,
+      model_id: r.model_id,
+      source_name: r.source_name,
+      source_url: r.source_url,
+      verified_date: r.tested_date,
     })),
   ];
 }

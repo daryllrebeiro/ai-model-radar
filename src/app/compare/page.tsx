@@ -4,8 +4,10 @@ import { getModelDetail, getModelCurrentList } from '@/lib/db/queries';
 import { RAW_BENCHMARK_DATA } from '@/lib/benchmarks';
 import { findCapabilityForModel } from '@/lib/capabilities';
 import { findLicenseForModel } from '@/lib/licenses';
+import { findComplianceForModel } from '@/lib/compliance';
 import { CAPABILITY_FLAGS } from '@/types/capabilities';
 import { LICENSE_DISCLAIMER } from '@/types/licenses';
+import { COMPLIANCE_DISCLAIMER } from '@/types/compliance';
 import { computeArbitrageOpportunities } from '@/lib/arbitrage';
 import { PriceChart } from '@/components/models/price-chart';
 import { CompareButton } from '@/components/compare/compare-button';
@@ -56,6 +58,7 @@ export default async function ComparePage({ searchParams }: ComparePageProps) {
         arbitrage: arbitrage || null,
         capability: findCapabilityForModel(id),
         license: findLicenseForModel(id),
+        compliance: findComplianceForModel(id),
       };
     })
   );
@@ -400,6 +403,51 @@ export default async function ComparePage({ searchParams }: ComparePageProps) {
                     ) : (
                       <div className="p-3 rounded-xl bg-gray-900/40 border border-gray-800 text-center text-xs text-gray-400 font-mono">
                         No sourced license record yet
+                      </div>
+                    )}
+                  </div>
+
+                  {/* S7: Compliance (provider-level, not legal advice) */}
+                  <div className="space-y-2 border-t border-gray-800/80 pt-4">
+                    <span className="text-xs font-mono text-gray-400 uppercase font-semibold">
+                      Compliance
+                    </span>
+                    {item.compliance ? (
+                      <div className="p-3 rounded-xl bg-[#0B0F17] border border-gray-800/60 text-xs font-mono space-y-1.5">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-400">HIPAA eligible</span>
+                          <span className={item.compliance.hipaa_eligible === true ? 'text-emerald-400 font-bold' : 'text-gray-500'}>
+                            {item.compliance.hipaa_eligible === true ? 'Yes' : item.compliance.hipaa_eligible === false ? 'No' : 'Unknown'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-400">EU residency</span>
+                          <span className={item.compliance.eu_data_residency === true ? 'text-emerald-400 font-bold' : 'text-gray-500'}>
+                            {item.compliance.eu_data_residency === true ? 'Available' : item.compliance.eu_data_residency === false ? 'No' : 'Unknown'}
+                          </span>
+                        </div>
+                        {item.compliance.certifications.length > 0 && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-gray-400">Certifications</span>
+                            <span className="text-gray-200 text-right">{item.compliance.certifications.join(', ')}</span>
+                          </div>
+                        )}
+                        {item.compliance.overridden && (
+                          <p className="text-[10px] text-amber-400/80">Per-model override applies.</p>
+                        )}
+                        <p className="text-[10px] text-gray-500">{COMPLIANCE_DISCLAIMER}</p>
+                        <a
+                          href={item.compliance.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-cyan-400 hover:underline block"
+                        >
+                          Source: {item.compliance.source_name} · {item.compliance.verified_date}
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-xl bg-gray-900/40 border border-gray-800 text-center text-xs text-gray-400 font-mono">
+                        No sourced compliance record yet
                       </div>
                     )}
                   </div>

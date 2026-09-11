@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getModelCurrentList } from '@/lib/db/queries';
 import { validatePublicApiRequest } from '@/lib/api-auth';
-import { applyAttributeFilters, enrichModels, hasAttributeFilters } from '@/lib/catalog-enrichment';
+import { applyAttributeFilters, enrichModels, hasAttributeFilters, applyCategoryFilter } from '@/lib/catalog-enrichment';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,8 +28,11 @@ export async function GET(request: NextRequest) {
       toolCalling: want(searchParams.get('tool_calling')),
       vision: want(searchParams.get('vision')),
       commercial: want(searchParams.get('commercial')),
+      hipaaEligible: want(searchParams.get('hipaa_eligible')),
+      euResidency: want(searchParams.get('eu_residency')),
     };
     const hasAttrFilter = hasAttributeFilters(filters);
+    const category = searchParams.get('category') || 'all';
 
     const data = await getModelCurrentList({
       search,
@@ -41,8 +44,8 @@ export async function GET(request: NextRequest) {
       offset: hasAttrFilter ? 0 : offset,
     });
 
-    const models = applyAttributeFilters(data.models, filters);
-    const total = hasAttrFilter ? models.length : data.total;
+    const models = applyCategoryFilter(applyAttributeFilters(data.models, filters), category);
+    const total = hasAttrFilter || category !== 'all' ? models.length : data.total;
     const page = hasAttrFilter ? models.slice(offset, offset + limit) : models;
 
     return NextResponse.json({ models: enrichModels(page), total });

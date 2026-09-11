@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { getModelCurrentList } from '@/lib/db/queries';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 import { modelsQuerySchema } from '@/lib/validation/api-schemas';
-import { applyAttributeFilters, enrichModels, hasAttributeFilters } from '@/lib/catalog-enrichment';
+import { applyAttributeFilters, enrichModels, hasAttributeFilters, applyCategoryFilter } from '@/lib/catalog-enrichment';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,10 +31,13 @@ export async function GET(request: NextRequest) {
   }
 
   const { q, provider, free, sortBy, limit, offset } = parsed.data;
+  const category = (parsed.data as any).category as string | undefined;
   const filters = {
     toolCalling: (parsed.data as any).tool_calling as boolean | undefined,
     vision: (parsed.data as any).vision as boolean | undefined,
     commercial: (parsed.data as any).commercial as boolean | undefined,
+    hipaaEligible: (parsed.data as any).hipaa_eligible as boolean | undefined,
+    euResidency: (parsed.data as any).eu_residency as boolean | undefined,
   };
   const hasAttrFilter = hasAttributeFilters(filters);
 
@@ -49,8 +52,8 @@ export async function GET(request: NextRequest) {
     offset: hasAttrFilter ? 0 : offset,
   });
 
-  const models = applyAttributeFilters(data.models, filters);
-  const total = hasAttrFilter ? models.length : data.total;
+  const models = applyCategoryFilter(applyAttributeFilters(data.models, filters), category);
+  const total = hasAttrFilter || (category && category !== 'all') ? models.length : data.total;
   const page = hasAttrFilter ? models.slice(offset, offset + limit) : models;
 
   const enriched = enrichModels(page);

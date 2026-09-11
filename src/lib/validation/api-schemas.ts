@@ -21,6 +21,17 @@ export const modelsQuerySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((val) => (val === undefined ? undefined : val === 'true')),
+  // S7 compliance filters (provider-level sourced data, applied post-query).
+  hipaa_eligible: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((val) => (val === undefined ? undefined : val === 'true')),
+  eu_residency: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((val) => (val === undefined ? undefined : val === 'true')),
+  // S9 category switch (chat | embedding | all). Absent = all.
+  category: z.enum(['chat', 'embedding', 'all']).optional().default('all'),
   sortBy: z.enum(['name', 'price', 'context', 'updated']).default('name'),
   limit: z
     .string()
