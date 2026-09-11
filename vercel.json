@@ -15,6 +15,14 @@
     {
       "path": "/api/cron/digest?timeframe=weekly",
       "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/cron/deprecations",
+      "schedule": "0 9 * * 1"
+    },
+    {
+      "path": "/api/cron/active-probe?dry_run=1",
+      "schedule": "0 10 * * 1"
     }
   ]
 }

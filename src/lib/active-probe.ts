@@ -20,6 +20,53 @@ import {
  */
 export const CANARY_BATTERY_VERSION = 1;
 
+/**
+ * P1-1 kill switch: paid cycles run ONLY when explicitly enabled.
+ * Fail-closed default OFF — the future scheduled trigger (P2-2) must check
+ * this before spending a cent. Deliberately env-based (not DB) so ops can
+ * cut spend without a deploy or a working database.
+ */
+export function isActiveProbeEnabled(): boolean {
+  return process.env.ACTIVE_PROBE_ENABLED === 'true';
+}
+
+/**
+ * P2-2 — OpenAI-compatible generator behind dedicated PROBE_* credentials.
+ * Lives in lib (not the cron route module) because Next.js route files may
+ * only export HTTP handlers + config. Timed per call; upstream errors throw
+ * so the cycle counts them as errors (never sampled, never diffed).
+ */
+export function buildProbeGenerateFn(opts: {
+  baseUrl: string;
+  apiKey: string;
+  timeoutMs?: number;
+  fetchFn?: typeof fetch;
+}): GenerateFn {
+  const timeoutMs = opts.timeoutMs ?? 15000;
+  return async (model_id: string, prompt: string, max_tokens: number) => {
+    const started = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await (opts.fetchFn || fetch)(`${opts.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
+        body: JSON.stringify({ model: model_id, messages: [{ role: 'user', content: prompt }], max_tokens }),
+        signal: controller.signal,
+      });
+      const ttftMs = Date.now() - started;
+      if (!res.ok) throw new Error(`probe upstream HTTP ${res.status}`);
+      const body = (await res.json()) as any;
+      const output = body?.choices?.[0]?.message?.content;
+      if (typeof output !== 'string') throw new Error('probe upstream returned no content');
+      const elapsedSec = Math.max(0.001, (Date.now() - started) / 1000);
+      return { output, ttft_ms: ttftMs, tokens_per_sec: Math.round((output.length / 4 / elapsedSec) * 100) / 100 };
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+}
+
 export const CANARY_BATTERY: CanaryPrompt[] = [
   {
     id: 'factual-qa-capital',
@@ -117,6 +164,8 @@ export interface DriftCycleResult {
    * as empty output (an outage must not read as drift) and never abort the
    * whole cycle — one hung provider stalls at most its own calls. */
   errors: number;
+  /** P2-2: per-model error counts so the spend ledger attributes failures. */
+  per_model_errors: Record<string, number>;
   latency: Record<string, { p50_ttft_ms: number | null; p95_ttft_ms: number | null; avg_tokens_per_sec: number | null; samples: number }>;
 }
 
@@ -148,6 +197,7 @@ export async function runActiveProbeCycle(opts: {
   let skipped = 0;
   let calls = 0;
   let errors = 0;
+  const perModelErrors: Record<string, number> = {};
   for (const modelId of targets) {
     for (const p of prompts) {
       if (calls >= cap) {
@@ -163,6 +213,7 @@ export async function runActiveProbeCycle(opts: {
         // sample (no outage-as-drift) and NO diff. The worker retries next
         // cadence; persistent errors page via the errors count.
         errors++;
+        perModelErrors[modelId] = (perModelErrors[modelId] || 0) + 1;
         continue;
       }
       samples.push({
@@ -194,5 +245,5 @@ export async function runActiveProbeCycle(opts: {
       samples: samples.filter((s) => s.model_id === modelId).length,
     };
   }
-  return { samples, diffs, calls_made: calls, calls_skipped_over_budget: skipped, errors, latency };
+  return { samples, diffs, calls_made: calls, calls_skipped_over_budget: skipped, errors, per_model_errors: perModelErrors, latency };
 }
