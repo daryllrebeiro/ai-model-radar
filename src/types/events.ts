@@ -1,6 +1,7 @@
 export type EventType =
   | 'NEW_MODEL'
   | 'MODEL_REMOVED'
+  | 'DEPRECATION_ANNOUNCED'
   | 'PRICE_CHANGE'
   | 'BECAME_FREE'
   | 'LEFT_FREE'

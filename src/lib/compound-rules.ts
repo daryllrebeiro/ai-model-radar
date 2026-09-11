@@ -30,6 +30,7 @@ export interface CompoundRuleInput {
 export const COMPOUND_EVENT_TYPES = [
   'NEW_MODEL',
   'MODEL_REMOVED',
+  'DEPRECATION_ANNOUNCED',
   'PRICE_CHANGE',
   'BECAME_FREE',
   'LEFT_FREE',
