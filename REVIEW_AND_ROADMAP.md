@@ -1,371 +1,361 @@
 # AI Model Radar - Architectural Review & Strategic Roadmap
 
-> Review scope: full repository (`src/`, `scripts/`, `migrations/`, `tests/`, `vercel.json`,
-> `package.json`, `.github/workflows/`, `src/lib/db/schema.sql`). Every claim is anchored to a
-> file and line number. Grades reflect production-readiness, not effort — this team ships fast
-> and the domain core is genuinely good. This review supersedes all earlier drafts: since the
-> last review the team has landed catalog SQL pushdown, bulk-insert batching, migration
-> hardening (per-file transactions, checksums, status command, migrations 010–013), and a
-> second security sweep (legacy-route throttling, sliding-window limiter, payload caps).
-> Verified live against `radar-pg:5433`: **308 tests pass local (+5 skipped), 322 pass on
-> Postgres, `tsc` clean, `eslint` 0 errors, `next build` green.**
+> Review scope: full repository as of `994653c` (`src/` — 242 files,
+> `scripts/`, `migrations/` 005–025, `tests/` — 80 files, `vercel.json`,
+> `package.json`, `.github/workflows/`, `src/lib/db/schema.sql`,
+> `extensions/`, `docs/`). Every claim is anchored to a file and line number.
+> Grades reflect production-readiness, not effort. This review supersedes all
+> earlier drafts: since the last review the team landed the `queries.ts`
+> god-module split (22 domain modules behind a barrel), R1–R10 feature batch
+> (extensions, capability/license data, usage import, compound alerts, savings
+> leaderboard, export connectors, connector system, pilot routing gateway),
+> the SCIM route-type fix, AES-GCM connector-secret encryption, and a full
+> adversarial audit round (AUDIT10Features.md). Verified live against
+> `radar-pg:5433`: **78 files / 465 tests pass local (+5 skipped), targeted
+> suites re-run green on Postgres, `tsc` clean, `eslint` 0 errors,
+> `next build` green.**
 
 ## 1. Executive Summary & Health Assessment
 
-**One-paragraph verdict:** AI Model Radar is a well-factored event-sourced market-intelligence
-system (Next.js 14 / TypeScript strict / Postgres with a JSON-file dev fallback) whose domain
-core — append-only `model_snapshots` plus derived `model_events`, fronted by pure deterministic
-engines for forecasts, signals, recommendations, probes, governance, and Q&A — is the right
-architecture for the problem. Three hardening passes have closed the acute risks and, since
-the last review, the two remaining user-facing scale hazards: the catalog path is now bounded
-SQL and the poll path writes in bulk. What remains is **structural, not acute**: the 3,022-line
-`queries.ts` god module still concentrates 17 tables in one file, the dual Postgres/JSON
-backends still lack a parity contract, and there is still no E2E coverage. None of this
-requires a rewrite. The highest-ROI remaining work is the module split plus the small set of
-operational guardrails itemized below.
+**One-paragraph verdict:** AI Model Radar is now a broad surface (26 pages,
+72 API routes, 30 tables, 3 extension packages) over the same disciplined
+event-sourced core — and the core survived the expansion intact: the
+append-only history was never written by any new feature path (proven by
+audit, not asserted), the old god module is dead, and 465 tests with zero
+mocks guard both backends. The new structural problem is the *cost of
+adding tables*: every table now has six touch points (`schema.sql`,
+`migrations/`, `LocalDbState`, backup/restore lists, `EXPECTED_TABLES`,
+domain module), and R5–R10 added six tables through exactly that gauntlet.
+The second problem is concentration re-forming elsewhere: `governance.ts`
+(831 lines), the 358-line chat route, and the digest route now carrying R6
+matching inline. Nothing here needs a rewrite; the highest-ROI work is
+retention policies for the new write-per-request tables, finishing the
+secrets-rotation story the audit started, and stopping the next god module
+before it calcifies.
 
 ### Overall System Maturity
 
 | Dimension | Grade | Rationale |
 |---|---|---|
-| Architecture | **B+** | Event-sourced core (`src/lib/db/schema.sql:4-36`), pure testable engines (`forecast.ts`, `signals.ts`, `probe.ts`, `governance.ts`, `ask-answer.ts`), clean feature-flag taxonomy. Dragged down by the `queries.ts` god module (3,022 lines) and a duplicated legacy + `v1` API surface (47 route files). |
-| Code Quality | **B+** | Strict TS (`tsconfig.json`: `strict:true`), zod env validation with prod fail-fast (`src/lib/env.ts`, `src/instrumentation.ts`), constant-time secret compare (`src/lib/secrets.ts:16-26`), hashed API keys, typed error taxonomy (`src/lib/errors.ts`) with no client leakage, secret-redacting logger (`src/lib/logger.ts:21-40`), full security headers (`next.config.mjs:4-36`). Offset by `any` clusters in query plumbing (294 warnings, 0 errors) and dual-backend branching per function. |
-| Maintainability | **B−** | Excellent engine-per-file separation; poor data-access separation (17 tables × 2 back-ends in one file); dual persistence backends with diverging semantics that every new table must be hand-mirrored across (`client.ts`, `backup-db.ts`, `restore-db.ts`). Mitigated but not solved: FK migration established the `users(id)` pattern, backup/restore order is canonical and tested, migrations carry checksums. |
-| Performance | **B** | Events, catalog, deals, and stats paths are now bounded SQL with keyset pagination and `COUNT(*) OVER()` (`queries.ts:180-297, 486-533, 789-920`); bulk writes are chunked multi-row (`BULK_CHUNK_ROWS = 1000`). Remaining: `getLatestSnapshotsMap` full `DISTINCT ON` scan still backs several reads, restore replays row-by-row, local backend stays in-memory. Safe well past 10⁵ rows on hot paths. |
-| Test Coverage | **A−** | 56 files / 322 tests green in **both** DB modes (dual-mode CI matrix + typecheck + lint + audit + build gates), real route handlers against real backends instead of mocks (`vi.mock` count: **zero**), Postgres-only 100k-row scale test, FK round-trip backup test, sanitizer / secrets / SSRF / rate-limit / error-taxonomy / parity suites. Remaining: zero E2E, serial execution (`fileParallelism: false`), no coverage gates, time-based tests without fake timers. |
+| Architecture | **B+** | Event core + pure engines intact; `queries.ts` is a 43-line barrel (`src/lib/db/queries.ts:24-43`) over 22 domain modules. Dragged down by re-concentration (`db/governance.ts` 831 lines, chat route 358 lines), 72 routes with legacy+`v1` duplication, and hardcoded static datasets (`benchmarks.ts`, `capabilities.ts`, `licenses.ts`) that require deploys for data updates. |
+| Code Quality | **B+** | Strict TS, `tsc` clean incl. tests, eslint 0 errors, zod at every new boundary (`api-schemas.ts` now 10KB covering R5–R10 payloads), constant-time secrets, SSRF guard reused by R8. Offset by `any` warnings (pre-existing pattern, now ~350+) and JSONB condition blobs (`compound_rules.conditions`) validated only in app code. |
+| Maintainability | **B** | Domain-per-file is holding (new features followed it: `db/usage-imports.ts`, `db/routing.ts`, `lib/compound-rules.ts`). Tax: 6 touch points per table, 29 local-backend keys to mirror, hand-maintained backup/restore orders, and `012` migration drift still open on dev (blocks checksum-gated deploys). |
+| Performance | **B** | Hot catalog/event paths bounded; R8 drivers capped (20/10 per run); digest fan-out capped. Open: `getLatestSnapshotsMap` full `DISTINCT ON` scan still backs detail/health/arbitrage/probe reads (`catalog.ts:20-26`); `routing_attempts` is write-per-request with no retention; digest R6 hook evaluates up to 500 events × rules per tick unmeasured. |
+| Test Coverage | **A−** | 80 files / 465 pass (+5 skipped) in local mode, targeted suites green on Postgres, `vi.mock` count **zero**, mutation-verified PIN test for the tier-gate recurrence. Gaps unchanged: no E2E, serial execution (`fileParallelism: false`), no coverage gates, no fake timers. |
 
 ### Architectural Philosophy
 
 **Core strengths (keep and extend):**
-1. **Append-only event sourcing where it matters.** `model_snapshots` (immutable poll log) →
-   derived `model_events` (the product) is exactly right for a price-history moat. The schema
-   is disciplined: composite `(model_id, polled_at DESC)` / `(event_type, detected_at DESC)`
-   indexes, FK cascades on teams/governance tables, `CHECK (monthly_budget_usd > 0)`, stable
-   `users(id)` identity FKs with emails retained display-only, and a deterministic
-   `model_current` view (`DISTINCT ON … ORDER BY model_id, polled_at DESC, id DESC`).
-2. **Pure engines, routes second.** Forecast, signals, recommendation, probe-health,
-   governance, ask-answer, and briefs are side-effect-free functions with injected clocks.
-   This is why hundreds of engine tests run in seconds of test time. Do not regress this pattern.
-3. **Auth is boring in the good way — and fail-closed everywhere.** `getSessionUser` with
-   `X-User-Email` untrusted, `normalizeTier` at every boundary, monotonic-only tier upgrades,
-   `requireFeature` gating, constant-time secret compare at every cron/admin boundary, plus
-   fail-closed cron/webhook/bot handlers, key revocation on cancel, per-route session rate
-   limits, and — since this pass — throttling on every legacy read route and a true sliding
-   window limiter. This layer needs preservation, not rework.
-4. **Dual-mode CI is a genuine asset.** `local × postgres × Node 18/20` matrix plus `audit`
-   and `build` gates (`.github/workflows/ci.yml`) caught real backend-divergence bugs. Add the
-   Dependabot + nightly-k6 additions to the asset column: supply-chain and load signals now
-   arrive without human prompting.
+1. **The moat held through a 10-feature expansion.** R9/R10 were the
+   dangerous ones — unreviewed ingestion and live traffic routing — and both
+   landed with the invariant intact: `runConnector()` has zero non-test
+   callers in `src/`+`scripts/` (audit-proven), and the gateway cannot
+   silently substitute (400 without policy, verbatim explicit model).
+   The "database is the product" principle now has machine enforcement, not
+   just documentation.
+2. **Engines-first held for R5/R6/R9/R10.** `usage-import.ts`
+   (parse/aggregate/reconcile pure), `compound-rules.ts` (validate/match
+   pure), connector `normalize` (pure), router `select*` (pure) — all
+   unit-tested without I/O. The digest-cron R6 hook is correctly shaped:
+   bounded, fail-safe-wrapped, never fails the digest.
+3. **Fail-closed is now a house style.** Pilot triple-gate, secret-storage
+   refusal without key, legacy-plaintext refusal, unsigned-webhook default
+   deny, SSRF-guarded user destinations, no-retry proxy (double-bill
+   reasoning documented). New code copies this shape without being told.
+4. **Auditability as a feature.** `routing_attempts` + `routing/stats` is
+   the first true operational metric surface; `AUDIT10Features.md` plus
+   42 audit tests make the last round reproducible instead of lore.
 
 **Fundamental structural risks:**
-1. **The god module.** `queries.ts` (3,022 lines and growing — up from 2,653 last round
-   *because* the pushdown and batching work landed inside it) is where velocity goes to die:
-   every data change touches the same merge-conflict surface, and Postgres/JSON branches for
-   the same function drift apart silently. Each landed improvement that lives here raises the
-   cost of the eventual split.
-2. **Two databases, one contract, weak enforcement.** The local JSON backend is a partial
-   simulator that now fails loudly on unknown statements (an improvement), but every new
-   table/column must still be mirrored in `LocalDbState`, `backup-db.ts`, `restore-db.ts`
-   allowlists, and both branches of each query function. There is still no parity test and
-   no shared fixture helpers — divergence is caught by humans, not machines.
-3. **Residual unbounded reads.** The hot paths are bounded, but `getLatestSnapshotsMap`
-   (full `DISTINCT ON` scan) still backs health checks, arbitrage, probes, and several pages;
-   `getDealsData` free-models has no `LIMIT`; restore replays row-by-row. Each is small
-   today and each has a cliff at scale.
+1. **Table-addition fan-out (6 touch points).** `schema.sql` + migration +
+   `LocalDbState` (3 spots: interface, `emptyState`, hydration) +
+   backup list + restore order + serials set + `EXPECTED_TABLES` (now 30).
+   R5–R10 did all six correctly six times — by diligence, not tooling.
+   The next contributor will miss one.
+2. **Re-concentration.** `db/governance.ts` (831 lines, budgets + shadow +
+   approvals + quorum) is the old god module reincarnating by domain
+   instead of by backend. The chat route (358 lines: auth + breaker +
+   policy + forwarding + fail-open + audit) and digest route (214 lines)
+   are route-level equivalents. Each is one feature away from unreviewable.
+3. **Data-as-code for market facts.** Benchmarks, capabilities, and licenses
+   are curated TS arrays — correct for sourcing rigor, but every provider
+   change ships as a code deploy, and the R1-0528 correction proved these
+   rows rot. No curation path, no staleness signal, no owner.
 
 ### Primary Bottlenecks
 
-1. **Module concentration, not query latency.** The bottleneck has moved up the stack: with
-   hot paths bounded, the binding constraint on shipping speed is `queries.ts` itself —
-   3,022 lines, 17 domains, 2 backends per function. Every data change risks unrelated domains.
-2. **Write-path ceiling, raised but not removed.** Bulk inserts took polling from N round
-   trips to N/1000; the remaining ceiling is restore replay (row-by-row) and the absence of
-   `COPY`/`unnest` for the largest transfers.
-3. **Local JSON backend blocks the event loop**: `getLocalState`/`saveLocalState` do sync
-   `readFileSync` plus whole-file rewrite on every mutation (atomic rename on POSIX,
-   copy+unlink fallback on Windows — crash-atomicity holds only on POSIX). Parallel tests
-   remain disabled (`vitest.config.ts:7`), so suite wall-time (~110s local / ~133s Postgres)
-   grows linearly with every added file.
+1. **Unbounded new tables.** `routing_attempts` grows per proxied request
+   and `usage_imports.rows_json` stores up to 2MB per import — neither has a
+   retention/prune policy (`prune-raw-json` covers only the old path).
+   This is the next storage cliff, and it is also a privacy posture issue
+   for financial data.
+2. **Suite wall-time under serial execution.** 78 files passed in ~226–327s
+   local; every R-round adds files linearly because the JSON backend forces
+   `fileParallelism: false`. CI feedback is now the slowest part of shipping.
+3. **Single-key secret envelope.** `EXPORT_CONNECTOR_KEY` rotation is
+   delete-and-re-register (documented, executable, but operationally sharp):
+   a leak forces coordinated user action instead of a transparent re-wrap.
+   Fine for the current connector count; not fine at 10×.
 
 ## 2. In-Depth Engineering Review
 
 ### Design Patterns & Modularity
-- **Engines are exemplary.** Each domain engine (`forecast`, `signals`, `recommendation`,
-  `probe`, `governance`, `ask-answer`, `briefs`, `arbitrage`, `cost-model`,
-  `migration-advisor`) is a cohesive module with a narrow interface and injected time. The
-  `v1` routes are thin adapters over them (e.g. `v1/alerts/evaluate`, `v1/ask`,
-  `v1/forecast`). Security primitives followed the same shape successfully (`ssrf-guard.ts`,
-  `stream-slots.ts`, `errors.ts`). New feature work should copy this shape, not the
-  `queries.ts` shape.
-- **Data access is the anti-pattern.** 17 tables × 2 backends in one 3,022-line file means
-  the module has ~17 reasons to change and every change risks the other 16. The pushdown,
-  batching, FK-migration, and idempotency work all landed here — each correct in isolation,
-  each raising the merge-conflict surface.
-- **Leaky backend abstraction.** Callers branch on `isPostgres()` leaking through the entire
-  codebase (`queries.ts` repeats `if (isPostgres()) … else …` per function; tests branch in
-  `events-scale.test.ts`, `schema-drift.test.ts`). The fallback path in `localQueryRunner`
-  now throws instead of returning silent `[]` — a genuine improvement — but the contract is
-  still enforced by code review, not by a parity test.
-- **Legacy + `v1` API duplication, now uniformly throttled.** ~14 legacy app routes overlap
-  ~18 `v1/*` routes. As of this pass every legacy read route runs the same
-  `validatePublicApiRequest` as its `v1` twin (identical tier logic by construction), and
-  session routes carry per-user limits. The duplication cost is now consistency risk, not
-  security risk.
-- **Separation that works:** `src/types/` (14 domain type files) is clean; `FeatureGate`
-  component + `FEATURES` taxonomy centralizes paywall logic; MCP tools
-  (`src/lib/mcp/tools.ts`) reuse the same engines as HTTP routes — genuine reuse, not copy-paste.
+- **Domain split landed and is being honored.** 22 modules under
+  `src/lib/db/` (largest: `governance.ts` 831, `catalog.ts` 608,
+  `teams.ts` 373, `users.ts` 338); routes import domains, barrel
+  preserves compat. New R5–R10 code followed the pattern instead of
+  reopening the god module — the strongest evidence the split worked.
+- **Next split candidates are visible now:** `governance.ts` →
+  `governance/{rules,shadow,approvals}.ts`; chat route → thin adapter over
+  `lib/routing/forward.ts` (upstream call + fail-open shaping) keeping
+  `router.ts` pure-selection; digest route → extract the R6 hook into
+  `lib/compound-digest.ts` (it already has a clean inputs/outputs shape).
+- **Static datasets need an interface, not just arrays.** `capabilities.ts`,
+  `licenses.ts`, `benchmarks.ts` share a shape (sourced, dated, lookup +
+  filter helpers) but no common type or staleness contract. A
+  `SourcedRecord { source_url, verified_date }` base + a
+  `verify:sources` CI job that fails on records older than N days would
+  convert the R1-0528 lesson into machinery.
+- **Legacy + `v1` duplication persists across ~14 surfaces** (models,
+  events, and now capability/license enrichment implemented twice:
+  `api/models/route.ts` vs `api/v1/models/route.ts`). Enrichment logic
+  (`findCapabilityForModel`/`findLicenseForModel` join + attr filtering)
+  is already copy-pasted between the twins — extract to
+  `lib/catalog-enrichment.ts` before the third copy.
+- **Extensions are correctly isolated** (own dir, excluded from root
+  `tsconfig.json:26`, vscode has its own tsconfig) and covered by
+  `audit10-tier-a` via stub-DOM — but neither extension compiles/publishes
+  in CI, so bit-rot has no tripwire.
 
 ### Data Architecture & Persistence
-- **Schema: good bones, integrity batches landed.** 17 tables + `model_current` view, ~25
-  indexes, sensible cascades. Identity FKs point at immutable `users(id)` with emails
-  display-only. Billing idempotency has a dedicated `processed_stripe_event_ids` table;
-  approval races are closed by `UPDATE … AND status='pending'` plus a pending-dedup partial
-  unique index; orphaned FK rows land in a durable `fk_orphans` review table instead of
-  rotting as silent NULLs.
-- **Query patterns: bounded on hot paths, in-memory on the local backend by design.** Events,
-  catalog, deals, and stats push predicates + `ORDER BY` + `LIMIT` into SQL with `COUNT(*)
-  OVER()` totals on Postgres (`queries.ts:180-297, 486-533, 789-920`); the JSON fallback
-  hydrates and slices in memory, which is acceptable for a dev backend but means local-mode
-  latency never predicts production. `getModelDetail` / `getModelPriceHistory` still issue
-  2 sequential `pool.query` calls that could be one round trip; `exportUserData` chains
-  sequential queries where `getTeamDetail` already shows the `Promise.all` pattern.
-- **Pooling: adequate, not yet defensive.** Single global `Pool` with `max: 10`,
-  `idleTimeoutMillis: 30000`, and — new this pass — `connectionTimeoutMillis: 5000`,
-  `statement_timeout: 15000`, and `pool.on('error')` logging (`client.ts:20-48`). No
-  `pool.end()` handling, no transaction pooler. Under Vercel serverless, a process-global
-  pool per warm instance can still exhaust a small Postgres `max_connections` during burst
-  cold-starts — acceptable today, revisit with PgBouncer/Supabase pooler at scale.
-- **Migration hygiene: much improved, one gap left.** Nine incremental files (`005`–`013`)
-  tracked by filename **plus SHA-256 checksums** with drift detection, each applied inside
-  its own transaction, `EXPECTED_TABLES` current at 23, and a `db:migrate:status` command
-  that exits nonzero when pending/drifted. Still missing: down migrations. The `001-004`
-  baseline fold-in is documented in `scripts/migrate.ts:10-19`; `schema.sql:1-2` now
-  correctly states "PostgreSQL only — uses BIGSERIAL, JSONB, TIMESTAMPTZ, DISTINCT ON,
-  none of which SQLite supports."
+- **Schema: 30 tables, integrity preserved.** FKs to `users(id)`,
+  CHECKs on money/logic/status columns, partial unique index on
+  approvals, `enc:v1:` ciphertext for connector secrets. Migrations
+  021–025 applied cleanly on real Postgres with per-file transactions.
+- **Query patterns: bounded reads, unbounded writes.** Reads stayed
+  disciplined (R8 caps, digest caps, `COUNT(*) OVER()` totals preserved in
+  the attr-filter path). Writes did not: `routing_attempts` (per request),
+  `digest_deliveries`, `usage_imports.rows_json` (per upload) have no
+  retention. The `model_current` view + `DISTINCT ON` full scan still backs
+  `getLatestSnapshotsMap` and therefore detail/health/arbitrage/probes.
+- **Dual-backend cost is now the dominant data tax.** 29 local-state keys,
+  each with Postgres + JSON branches per function, plus three list files.
+  Parity held this round (targeted suites green both modes) — by running
+  everything twice, which is exactly the velocity tax §1 names.
+- **Migration hygiene: good with one open sore.** Checksums, transactions,
+  `migrate:status` all working; `012` drift on dev remains unaddressed,
+  which vetoes the planned checksum-gated deploy. New tables did not add
+  down-migration support (policy is forward-only + backup/restore —
+  documented in `migrate.ts:15-19`, acceptable if the 012 drift is the
+  exception that proves backups work).
 
 ### Error Handling & Fault Tolerance
-- **Handler is typed and safe.** `toAppError` (`src/lib/errors.ts:118-140`) maps unknown
-  errors to a generic `InternalError` (raw `err.message`, pg codes, and Zod internals never
-  reach clients — enforced by `tests/error-taxonomy.test.ts`), with `ValidationError → 400`,
-  `ConflictError → 409`, `RateLimitError → 429` for known shapes; originals stay server-side
-  via `captureException`. Legacy read routes return generic messages without stacks. No
-  `err.message`-to-client pattern remains in API responses.
-- **No resilience patterns.** No retries with backoff on ingestion fetches, no circuit
-  breaker around OpenRouter/GitHub/HuggingFace sources, no per-source isolation (one slow
-  source stalls the poll). The fail-closed philosophy now covers auth, rate limiting, cron,
-  webhooks, and bot handlers — ingestion is the last major subsystem without it.
-- **Write-path fire-and-forget** persists in spots (`updateApiKeyLastUsed().catch(()=>{})`,
-  digest-delivery audit `.catch(()=>{})`): acceptable for telemetry, but audit the list
-  before calling any of them load-bearing.
-- **Cron fragility, reduced.** Vercel crons are authenticated fail-closed with hashed-IP
-  denial audit logs and bounded fan-out (digest cap with deferred reporting) — but still no
-  overlap guard (a slow poll + next tick = concurrent writers), no dead-letter record beyond
-  `ingestion_runs`, and local cron runs depend on wall-clock invocation with no scheduler.
-  The SSE stream has `maxDuration = 60` plus per-identity connection caps.
+- **Best-in-class for the project's age at the edges:** typed taxonomy with
+  no client leakage, fail-closed cron/webhook/SCIM/admin paths, SSRF guard
+  with redirect re-validation reused by R8, single-attempt proxy with
+  documented no-retry rationale, legacy-plaintext refusal, decrypt-failure
+  delivery degradation (secretless → driver fails closed, never plaintext).
+- **Gaps, ordered by blast radius:** (1) digest R6 hook failure is swallowed
+  to warn-log — correct for digest survival, but a silently dead hook looks
+  identical to "no matches" (add a hook-error counter to the digest
+  response); (2) no per-source isolation/timeouts in `runConnector` beyond
+  what each connector implements (the interface documents throw-and-isolate
+  but does not enforce a timeout — add `AbortSignal.timeout` in the runner);
+  (3) R8 drivers share a 10s timeout but no circuit breaker — one slow
+  Datadog endpoint serially delays a 20-event push (batch or deadline it).
 
 ### Observability & Diagnostics
-- **Structured logging, with redaction and audit trails.** `src/lib/logger.ts` emits JSON
-  with secret-shaped keys scrubbed, stable `hashIp`/`hashEmail` for correlation without PII
-  retention, and `logAuthDenied` records auth denials. Remaining gap: raw interpolated emails
-  persist in a few message strings outside the redacted paths; finish the `hashEmail` sweep.
-- **No metrics, no tracing.** "Telemetry" in this repo means *product* endpoint telemetry —
-  valuable for users, useless for operators. No request-latency histograms, no DB-pool gauges,
-  no error-rate counters, no trace propagation. The k6 nightly workflow produces load signals
-  but nobody is paged on them yet.
-- **Alerting hooks exist but point inward.** `triggerEscalationAlert` pages on ingestion
-  failures — the right instinct, but it covers one source through an unmonitored channel. No
-  SLOs, no burn-rate alerts, no cron-success/failure alerting.
+- **Logs are good; metrics are one endpoint.** Secret-redacting JSON logs,
+  auth-denied audit, delivery audit, DLQ, and now `routing/stats`
+  (success rate, p50/p95, by-policy) — the first reliability-first readout.
+  Still no request-latency histograms, pool gauges, error counters, trace
+  propagation, SLOs, or paging (R10 stats has thresholds in prose, not alerts).
+- **R-round metrics are product-telemetry, correctly scoped:** upload
+  completion/deletion counts, `compound_rule_created`, connector runs,
+  case-study submissions — counts without PII. The missing piece is
+  *using* them: no dashboard or review cadence consumes the usage
+  thresholds each feature spec demanded (CTR, second-upload habit,
+  multi-condition share).
 
 ### Testing & Quality Assurance
-- **Genuinely strong for the project's age.** 56 files / 322 tests green in **both** DB modes
-  (dual-mode CI matrix: Node 18/20 × local/postgres + `tsc` + `eslint` + `npm audit` +
-  `next build` gates), real route handlers against real backends instead of mocks (`vi.mock`
-  count: **zero**), Postgres-only 100k-row scale test, FK round-trip backup test, sanitizer /
-  secrets / SSRF / rate-limit / error-taxonomy / parity suites, plus catalog-pushdown and
-  backend-parity suites from this pass. The `Date.now() + random` fixture pattern (now
-  factored into `tests/helpers.ts`) is the template all fixture authors should copy.
-- **Gaps, ordered by risk:**
-  1. **No E2E.** The k6 script runs nightly, explicitly non-blocking. Nothing exercises the
-     browser → API → DB path; `FeatureGate` + paywall UX is untested.
-  2. **Serial execution as a load-bearing constraint.** `fileParallelism: false` exists
-     because the JSON backend can't handle concurrency. Suite wall-time (~110s / ~133s)
-     grows linearly with every added file; this is a velocity tax that compounds.
-  3. **Wall-clock tests without fake timers** (`vi.useFakeTimers` count: zero). Windows are
-     wide (hours/days) so flakes are rare, but the p95 assertion in `events-scale.test.ts`
-     can flake on loaded CI runners.
-  4. **Weak external assertions.** `github-integration.test.ts` passes whether the API
-     answers, rate-limits, or throws — it tests nothing and teaches that green means little.
-  5. **No coverage gates.** No `@vitest/coverage`, so the god-module split (§3, P1) can land
-     with zero new tests and CI stays green.
+- **Genuinely strong and still honest.** 465 pass / 5 skipped local, zero
+  `vi.mock`, real handlers × real backends, mutation-verified PIN test
+  (`tier-normalization.test.ts:161` fails 403 on the reverted fix),
+  audit suites that found and fixed real bugs mid-audit (secret-store
+  slice bug, R1 slug truncation). This is the project's crown jewel —
+  protect it.
+- **Gaps, ordered by risk:** (1) **No E2E** — paywall UX, upload→reconcile→
+  share→moderate→leaderboard, and compound builder flows are untested
+  across the browser→API→DB path; (2) serial suite (~4–5.5 min and growing
+  linearly); (3) no coverage gates — the governance/chat/digest splits can
+  land untested and CI stays green; (4) wall-clock tests without fake
+  timers; (5) extensions publish/compile outside CI.
 
 ## 3. Critical Modifications & Technical Debt Remediation
 
 | Priority | Category | Component / Module | Issue / Technical Debt | Impact If Ignored | Recommended Fix |
 |---|---|---|---|---|---|
-| P0 | Modularity | `queries.ts` god module (3,022 lines) | 17 tables × 2 backends in one file; every data change risks unrelated domains; growth accelerating (+371 lines last round) | Velocity decay; merge conflicts; a single bad edit can take down all domains | Split per domain (`db/users.ts`, `db/teams.ts`, `db/governance.ts`, `db/catalog.ts`, `db/events.ts`…) behind a repository interface; one domain per PR; keep function signatures stable so routes don't churn |
-| P0 | Performance | Residual hydration (`getLatestSnapshotsMap`, deals free-list, restore replay) | Full `DISTINCT ON` scan still backs health/arbitrage/probes/pages; **free-models capped at 500 locally**; restore uses chunked `bulkInsert` | Next user-visible degradation and slowest operational path as data grows | Push remaining filters down (or a `model_current` materialization); `LIMIT` on free-models; chunked multi-row restore replay reusing `bulkInsert` |
-| P1 | Reliability | Migrations (`scripts/migrate.ts`, `migrations/`) | No down migrations, 001-004 fold-in documented in `migrate.ts:10-19`, SQLite claim dropped | Half-applied production migration with no rollback path | Down-migration policy |
-| P1 | Performance | Pool (`client.ts:20-48`) | No `pool.end()` handling, no transaction pooler, `max: 10` per serverless instance | Burst cold-starts exhaust small Postgres; wedged instances linger | PgBouncer/Supabase pooler evaluation; graceful shutdown; per-instance `max` tuning |
-| P1 | Testing | Cross-backend parity | No parity test, no shared fixture helpers (helpers exist now but parity coverage is one file) | Silent backend divergence on every new table | Expand parity coverage per new table; `vi.useFakeTimers` for clock tests |
-| P2 | Hygiene | `localQueryRunner` | Only a few statement shapes simulated (now fail-loud, good) | Local dev surprises on unimplemented shapes | Extend shapes as needed or route everything through per-function adapters |
-| P2 | Hygiene | Backup/restore allowlists (`backup-db.ts`, `restore-db.ts`) | New tables must be hand-added in 3+ places (now 23 + `schema_migrations` exclusion) | Next new table ships unrestorable, exactly like `teams` did | Derive table list from `information_schema` filtered against an explicit exclusion set, keeping `RESTORE_ORDER` only as an ordering hint with an assertion that every dumped table appears in it |
-| P2 | Testing | E2E + parallelism + coverage | No E2E, serial suite, no coverage gates, time-based tests | Regressions reach users; suite time grows linearly; god-module split lands untested | Playwright smoke (signin → watchlist → alert); per-file workers with isolated schemas (`CREATE SCHEMA test_$worker`); `@vitest/coverage` thresholds on `src/lib` |
-| P2 | Observability | Metrics/tracing (`logger.ts` only) | Logs without metrics, traces, or SLOs | Degradation discovered by users, not dashboards | Request-duration histogram + pool-gauge + error counters; alert on cron failure and catalog p95; page on k6 nightly regressions |
+| P0 | Data lifecycle | `routing_attempts`, `usage_imports` | Unbounded write growth; financial rows retained indefinitely | Storage cliff + privacy posture decay on spend data | Retention policy + job: attempts aggregate-then-prune at 30/90d; imports auto-expire opt-in window (default 12mo, user-deletable anytime already); extend `prune-raw-json` into `prune-pii-tables` |
+| P0 | Secrets | `src/lib/secret-store.ts` | Single-key envelope; rotation = re-register (sharp at scale) | Key leak forces coordinated user action across all connectors | Dual-key decrypt (`EXPORT_CONNECTOR_KEYS` list, try-each) + `re-encrypt` script; keep `enc:v1:` prefix → `enc:v2:` migration path |
+| P0 | Modularity | `db/governance.ts` (831 lines) | Budgets + shadow + approvals + quorum in one module — god-module recurrence | Same velocity death as `queries.ts`, one domain away | Split to `governance/{rules,shadow,approvals}.ts` behind current exports; one domain per PR |
+| P1 | Modularity | Chat route (358 lines), digest route (214) | Auth + policy + forwarding + fail-open + audit in one handler; R6 hook inline | Unreviewable at next feature; hook errors invisible | Extract `lib/routing/forward.ts`, `lib/compound-digest.ts`; add hook-error count to digest JSON |
+| P1 | Migrations | `012` drift on dev | Blocks checksum-gated deploys; normalizes "drift is fine" | Next real drift ignored as noise | Resolve (re-baseline or document-and-repair), then gate deploys on `migrate:status` clean |
+| P1 | Data freshness | `capabilities.ts`, `licenses.ts`, `benchmarks.ts` | Curated arrays rot silently (proven by R1-0528) | Stale capability/license data served as sourced fact | Shared `SourcedRecord` type + `verify:sources` CI staleness check + named data owner per file |
+| P1 | Reliability | `runConnector`, R8 drivers | No enforced timeout/circuit breaker on third-party calls | One slow upstream stalls runs serially | `AbortSignal.timeout` in runner; batch R8 pushes with an overall deadline |
+| P1 | API surface | Legacy + `v1` twins | Enrichment/filter logic already duplicated twice | Third copy guaranteed | `lib/catalog-enrichment.ts` shared by both twins; freeze legacy per ADR-4 |
+| P2 | Testing | E2E + coverage + parallelism | No browser path tests, no gates, serial suite | Regressions reach users; CI time grows linearly | Playwright smoke (upload→share→moderate; builder→test-delivery); per-file workers w/ isolated schemas; `@vitest/coverage` thresholds on `src/lib` |
+| P2 | Observability | Metrics/tracing | Logs without counters/traces/SLOs; R10 thresholds in prose | Degradation found by users; pilot bar unenforced | Histograms + gauges + error counters; page on routing 1h success < 99% / p95 overhead > 250ms; consume the R-spec usage metrics on a dashboard |
+| P2 | Moderation | `admin/savings` via shared `ADMIN_SECRET` | No separate moderator role; single secret = full admin | Over-privileged moderation access | Scoped `MODERATION_SECRET` or role claim; moderation audit log (who approved what, when) |
+| P2 | DX/CI | Extensions outside CI | Browser/VSCode packages compile/publish manually | Silent bit-rot | CI jobs: `tsc` vscode ext, package browser ext artifact, run `audit10-tier-a` (already in suite — keep) |
 
-### Before/After: P0 god-module split (the next cut to make)
+### Before/After: P0 dual-key secret envelope
 
 ```ts
-// BEFORE: everything behind one import surface
-import { getModelCurrentList, createTeam, updateUserTier, ... } from '@/lib/db/queries';
-// 3,022 lines, 17 domains, 2 backends per function.
+// BEFORE (secret-store.ts): single key, rotation = re-register everything
+const key = sha256(EXPORT_CONNECTOR_KEY);          // one key or nothing
+decryptSecret(ciphertext);                          // throws on rotation day
 
-// AFTER: domain modules behind a stable repository interface; routes import
-// only their domain. The existing function signatures become the interface,
-// so no route churns during the split.
-import { getModelCurrentList } from '@/lib/db/catalog';
-import { createTeam } from '@/lib/db/teams';
-import { updateUserTier } from '@/lib/db/users';
+// AFTER: key list with versioned envelopes, transparent rotation
+// enc:v2:<keyId>:<iv>:<ct>:<tag> — decrypt tries each configured key,
+// encrypt always uses the newest. Rotation = add key, run re-encrypt,
+// drop old key. Users never re-register.
+const keys = parseKeyring(EXPORT_CONNECTOR_KEYS);   // "id:hex,id:hex"
+decryptSecret(row.secret, keys);                    // try-each by keyId
+await reencryptConnectors(keys);                    // background script
 ```
 
-### Before/After: P0 chunked restore replay (reuse the proven helper)
+### Before/After: P0 retention for write-per-request tables
 
 ```ts
-// BEFORE (scripts/restore-db.ts): one round trip per row
-for (const row of rows) {
-  await client.query(`INSERT INTO ${table} (...) VALUES (...)`, values);
-}
+// BEFORE: every proxied call appends forever; no job exists
+await recordRoutingAttempt({ ... });                // routing_attempts grows ∝ traffic
 
-// AFTER: same bulkInsert(table, columns, rows) queries.ts already uses —
-// one round trip per 1,000 rows, inside the existing transaction.
-await bulkInsert(client, table, columns, rows.map(toValueArray));
+// AFTER: bounded raw window + rolled-up history (same pattern as prune-raw-json)
+await recordRoutingAttempt({ ... });                // unchanged write path
+// nightly: ROLLUP routing_attempts → routing_daily_stats (policy, success_rate,
+// p50/p95) then DELETE raw rows older than 30d; usage_imports older than the
+// account retention window (default 12mo)(listed, consented, deletable anytime).
 ```
 
-### Completed exemplar: P0 catalog pushdown (landed, keep as template)
+### Before/After: P1 shared enrichment (kill the third copy)
 
 ```ts
-// BEFORE: hydrate everything, then filter/sort/slice
-const snapshotMap = await getLatestSnapshotsMap();
-let models = Array.from(snapshotMap.values());
-models = models.filter(...); models.sort(...);
-return { models: models.slice(offset, offset + limit), total: models.length };
-
-// AFTER (queries.ts:486-533): predicates + ORDER BY + LIMIT in SQL,
-// COUNT(*) OVER() for totals — Node never holds more than one page.
-const res = await pool.query(
-  `SELECT *, COUNT(*) OVER() AS full_count FROM model_current
-   WHERE ${where.join(' AND ')} ORDER BY ${orderCol} ${dir}
-   LIMIT $n OFFSET $m`, [...params, safeLimit, safeOffset]);
+// BEFORE: identical join+filter code in api/models/route.ts and api/v1/models/route.ts
+// AFTER (lib/catalog-enrichment.ts): one function, both twins call it
+export function enrichModels(models: ModelCurrent[]) { ... capabilities/license join ... }
+export function applyAttributeFilters(models, { tool_calling, vision, commercial }) { ... }
 ```
 
 ## 4. Optimization & Enhancement Recommendations
 
 ### Performance & Scalability
-- **Residual hydration next** (§3 P0) — `getLatestSnapshotsMap` callers, free-models `LIMIT`,
-  chunked restore replay. Everything else hot is bounded or back-office.
-- **Pool defensively for serverless.** Timeouts and idle-error logging landed; add graceful
-  shutdown and evaluate a transaction pooler before the next traffic step-change.
-- **Cache the slow-but-stable.** `model_current` aggregations, benchmark matrices, and stats
-  change on poll cadence (hourly), not request cadence — a 5-minute TTL layer on `/api/stats`,
-  deals, and benchmarks removes repeated scans without invalidation machinery.
-- **Asset basics.** No Docker (Vercel target — fine). Security headers ship globally;
-  extend CDN/cache-header treatment to badges and `v1/benchmarks` (`s-maxage` already on feed).
+- **Bound the new writes first** (§3 P0 retention) — the only tables whose
+  growth is ∝ traffic or ∝ upload size.
+- **Retire `getLatestSnapshotsMap` full scans** from health/arbitrage/probe
+  paths: serve from `model_current` with predicate pushdown (the catalog
+  pushdown in `catalog.ts:106-162` is the template), or a materialized
+  `model_current` refresh on poll.
+- **Deadline R8 fan-out**: one overall budget (e.g. 30s) across the ≤20
+  event pushes instead of 20 × 10s serial; record per-event skips.
+- **Pool defensively for serverless**: timeouts landed (`client.ts:28-34`);
+  add graceful shutdown on more paths (only `instrumentation.ts` wires
+  `closePool` today) and evaluate PgBouncer before the next traffic step.
+- **Cache slow-stable reads**: stats/deals/benchmarks change on poll
+  cadence — 5-minute TTL removes repeated scans with trivial invalidation.
 
 ### Developer Experience (DX) & Tooling
-- **Kill the JSON-backend parallelism tax.** POSIX atomic rename landed; Windows uses
-  copy+unlink (documented non-atomic). Next: in-process write mutex, then
-  `fileParallelism: true` with isolated Postgres schemas per worker. Suite time is the
-  team's second-biggest velocity lever after the god-module split.
-- **Typing strictness: hold the line.** `tsc --noEmit` over src+tests with zero drift plus
-  `eslint` 0 errors (294 warnings, all pre-existing patterns — no new `any` accepted in this
-  pass) is working. Keep the ratchet: scheduled `any`-count check until the god-module
-  split lands.
-- **Seed/fixture ergonomics: started.** `tests/helpers.ts` now holds `uniqueEmail`,
-  `seedTeamWithGovernance`, `seedCatalog` — migrate the remaining 60+ inline `Date.now`
-  call sites onto it.
-- **Migration DX.** `npm run db:init` works, `EXPECTED_TABLES` is current, and
-  `db:migrate:status` answers "is staging current?" in one command. Next: checksum-gated
-  deploy (fail the release when `drifted` is non-empty rather than logging).
+- **Kill the 6-touch table tax.** Codegen the mirror: derive `LocalDbState`
+  keys + backup/restore lists + `EXPECTED_TABLES` from `information_schema`
+  or a single `tables.ts` manifest; keep `RESTORE_ORDER` as ordering hint
+  with an assertion. Every R-round table proved humans *can* do six edits;
+  none proved they *will* forever.
+- **Parallelize the suite.** Per-file workers with isolated Postgres schemas
+  (`CREATE SCHEMA test_$worker`) + keep JSON mode serial-only; target: halve
+  wall-time before the next feature round doubles it again.
+- **Typing ratchet.** `tsc` clean + 0-error eslint is working; add a scheduled
+  `any`-count check (currently ~350 warnings) so the governance/chat splits
+  don't smuggle new ones.
+- **Seed curation tooling.** The R1-0528 lesson wants a `verify:sources`
+  script (fetch each `source_url`, confirm 200 + date sanity) run nightly,
+  paging the data owner — not a human calendar reminder.
 
 ### Security & Hardening Quick-Wins
-- **Done this pass, preserve:** fail-closed cron/webhook/bot handlers, prod-required
-  secrets, Stripe timestamp tolerance + event dedup + tier allowlist, key revoke-on-cancel,
-  SSRF guard with redirect re-validation, session rate limits on all legacy reads, security
-  headers, error-taxonomy no-leak, secret redaction + auth-denied audit, 7d rolling sessions,
-  exact dep pins + critical audit gate + Dependabot, sliding-window limiter, payload caps,
-  uniform-404 oracle suppression.
-- **Remaining cheap items:** extend `src/lib/validation/api-schemas.ts` (currently
-  models/events/benchmarks queries) to all mutation bodies (teams, watchlists, governance
-  rules, alerts) — several routes still hand-validate or don't; finish the `hashEmail`
-  sweep for the few raw-email log lines left; require `ADMIN_SECRET` in prod (currently
-  fail-closed 401-always, which is safe but ops-blind).
+- **Done and must be preserved:** triple-gate pilot, AES-GCM secrets with
+  fail-closed creation, legacy-plaintext refusal, SSRF-guarded
+  destinations, no-retry proxy, parameterized everything, redacted logs,
+  constant-time compares, tier normalization at every boundary (now
+  mutation-pinned on the chat path too).
+- **Remaining cheap items:** scoped moderation secret + approval audit log;
+  `EXPORT_CONNECTOR_KEY` rotation drill (procedure exists in SECRETS.md —
+  never exercised); `ADMIN_SECRET` prod requirement (already fail-closed
+  401-always; make it ops-visible); extend `api-schemas.ts` discipline to
+  any remaining hand-validated bodies; hook-error visibility for the R6
+  digest path.
 
 ## 5. Future Engineering & Feature Roadmap
 
 ### Phase 1: Stabilization & Hardening (Short-Term: Weeks 1–4)
-Prior hardening layers are done (tier/backfill/bounded-reads/secrets/CI; integrity batch;
-security pass; catalog pushdown + batching + migration hardening). This layer finishes the job:
-- [ ] P0 god-module split, first cut (catalog + users domains; land with tests)
-- [ ] P0 residual hydration (`getLatestSnapshotsMap` callers, free-models `LIMIT`, chunked restore)
-- [ ] P1 pool hardening completion (graceful shutdown, pooler evaluation)
-- [ ] P1 parity coverage per new table + migrate remaining fixtures to `tests/helpers.ts`
-- [ ] P1 migration down-policy + drop SQLite claim; checksum-gated deploys
-- [ ] P2 `.env.example` de-duplication; finish `hashEmail` sweep
-- Exit criteria: split landed without route churn; full suite green both modes (holds today: 308/313 local, 322/322 Postgres)
+- [ ] P0 retention job for `routing_attempts` + `usage_imports` (aggregate, prune, verify on Postgres)
+- [ ] P0 dual-key secret envelope + `re-encrypt` script + rotation drill
+- [ ] P0 `governance.ts` split, first cut (rules vs shadow vs approvals)
+- [ ] P1 resolve `012` drift; checksum-gated deploys
+- [ ] P1 extract `catalog-enrichment.ts`; freeze legacy routes per ADR-4
+- [ ] P1 `verify:sources` nightly job for curated datasets
+- [ ] P2 Playwright smoke (signin → upload → reconcile → share → moderate)
+- [ ] R-spec usage-threshold first review: extension CTR, capability/license filter usage, second-upload rate, multi-condition rule share, connector runs, case-study submissions — sunset what misses
+- Exit criteria: suite green both modes (holds: 465 local, targeted Postgres green); build green (holds); `migrate:status` clean (blocked today by `012`)
 
 ### Phase 2: Architectural Scaling & Performance (Medium-Term: Month 2–3)
-- [ ] Finish `queries.ts` split per remaining domains behind repository interfaces
-- [ ] Per-file test workers with isolated schemas; Playwright smoke suite (signin → watchlist → alert)
-- [ ] Coverage thresholds on `src/lib`; k6 nightly already runs — page on regressions
-- [ ] Cache layer (SWR/TTL) on stats/deals/benchmarks read paths
-- [ ] Cron overlap guard + dead-letter handling; ingestion per-source isolation + circuit breakers
-- [ ] Request-duration/pool-gauge/error-counter instrumentation with alerts
+- [ ] Chat/digest route thinning (`forward.ts`, `compound-digest.ts` + hook metrics)
+- [ ] `getLatestSnapshotsMap` retirement from hot paths; evaluate PgBouncer
+- [ ] Table-manifest codegen (kill the 6-touch tax); per-file test workers
+- [ ] Coverage thresholds on `src/lib`; k6 nightly paging (exists non-blocking — make it page)
+- [ ] R8 deadline fan-out + connector timeout enforcement; DLQ coverage for export runs
+- [ ] Metrics/tracing instrumentation with the R10 thresholds as the first real alerts
 - Exit criteria: suite time halved; E2E smoke green; degradation pages before users notice
 
 ### Phase 3: Next-Generation Feature Expansion (Long-Term: Month 4–6+)
 
 | Feature | Business / Technical Value | Complexity | Architectural Prerequisites |
 |---|---|---|---|
-| Real-time price-drop push (WebSocket/SSE on `v1/stream` extension) | Retention moat: users act in minutes, not next-digest | High | Stream caps already landed (`maxDuration`, per-identity slots); per-user fan-out design (ADR-2) |
-| Team workspaces v2 (roles, invites, shared budgets) | Enterprise upsell path for existing teams/governance tables | Med | FK-to-`users(id)` migration (done); error taxonomy for invite flows (done); E2E coverage of membership paths |
-| Usage-based billing metering (Stripe metered seats/events) | Monetizes the cost-optimizer value prop already built | Med | `FEATURE_ENFORCEMENT` rollout plan; webhook idempotency (done: event table + mark-after-commit); metering aggregation job |
-| Historical backtesting for RadarForecast | Proves forecast accuracy → converts free users | Med | Immutable snapshot guarantee (already have); forecast versioning (model_version column, new) |
-| Public API v2 with keyed quotas + self-serve keys | Developer adoption; API as acquisition channel | Med | Internal-route rate limits (done); key-management UI exists (`API_KEY_MANAGEMENT` flag) — needs quota display |
-| Multi-source consensus pricing (beyond OpenRouter) | Data moat + resilience to single-source outage | High | Per-source isolation + circuit breakers in ingestion (currently absent); source-weighted merge strategy (ADR-3) |
-| Anomaly alerts (spend spikes, EOL risk push) | Activates governance tables already shipped | Low | Cron overlap guard; escalation channel monitoring |
+| R10 general availability | Turns pilot infra into revenue routing | High | 7-day pilot bar (≥99% success, p95 < 250ms) sustained; dual-key secrets; stats paging; ADR-010 GA amendment |
+| Usage-based billing metering | Monetizes optimizer + routing value already built | Med | Metering aggregation job; webhook idempotency (done); retention policy (Phase 1) |
+| OAuth billing connections (R5 stretch) | Removes CSV friction; habit-forming imports | High | Dedicated token-storage audit (per R5 spec); scoped read-only OAuth; revocation UX |
+| Multi-source consensus pricing | Data moat + single-source resilience | High | Reviewed connectors running (R9 ops); source-weighted merge ADR; per-source breakers (P1) |
+| Public API v2 + usage tiers | Developer acquisition; monetized R8/R10 surface | Med | Legacy freeze (ADR-4); keyed quotas; quota display in key UI |
+| Team workspaces v2 (roles, invites) | Enterprise upsell for teams/governance/R7 | Med | Scoped moderation roles (P2); E2E membership paths |
+| Anomaly alerts (spend spikes, EOL push) | Activates governance + telemetry tables | Low | Cron overlap guard; escalation channel monitoring |
+| Extension store launches (R1/R2) | Funnel from where users already compare | Low | CTR instrumentation review; store-review privacy answers (allowlist story ready) |
 
 ## 6. Technical Decision Log (ADR Recommendations)
 
-**ADR-1: Single-backend or contract-tested dual-backend?**
-The Postgres/JSON split costs every data change a 2× implementation plus N allowlist updates,
-and buys fast local onboarding. Options: (a) keep both but pin with a cross-backend parity
-test and codegen'd table lists; (b) make Postgres mandatory for dev (Docker Compose one-liner)
-and demote JSON to a documented in-memory fixture backend; (c) SQLite file backend (real SQL,
-keeps zero-config dev). Decide before the `queries.ts` split, because the split's interface
-shape depends on whether two implementations must exist. Recommendation: (a) short-term with
-parity test, revisit (b) when contributor onboarding pain is measured, not assumed.
+**ADR-5: Single-backend or contract-tested dual-backend — revisit with numbers.**
+The JSON backend now mirrors 29 keys and doubles every query implementation;
+parity held this round but cost two full test runs per change. Either (a)
+keep both with generated mirrors (§4 codegen), or (b) demote JSON to a
+seeded fixture backend and require Docker Postgres for dev. Decide with
+measured contributor pain + CI minutes, before the next table-heavy round —
+the 6-touch tax compounds per table and this ADR is the only structural fix.
 
-**ADR-2: Sync routes vs async workers for poll/digest/probe pipelines?**
-Poll, digest, probes, and prune currently run as request-scoped cron invocations with no overlap
-guard, no retry, and Vercel execution-time ceilings (stream now has `maxDuration = 60`; crons
-do not). As sources and users grow, the digest fan-out (users × models × forecasts rendered
-per email) will exceed a single invocation. Options: (a) stay request-scoped with chunked
-cursors + overlap locks; (b) introduce a queue (BullMQ + Redis, or Vercel Queues / Inngest)
-with at-least-once workers; (c) scheduled ECS/Cloud Run jobs outside Vercel. Decide when any
-cron exceeds 50% of its interval or first overlap incident — instrument durations now so the
-trigger is data, not vibes.
+**ADR-6: Sync crons vs async workers for digest/probe/export/routing fan-out.**
+Digest (500-recipient cap with deferral), R8 pushes (serial, 10s each), and
+any routing growth all run request-scoped with serverless time ceilings.
+Options: (a) chunked cursors + overlap locks (current trajectory); (b) queue
+(BullMQ/Redis — Redis already implied by `UPSTASH_REDIS_*`, or Vercel
+Queues/Inngest); (c) off-Vercel scheduled jobs. Trigger: any cron exceeding
+50% of its interval or first overlap incident — instrument durations now.
 
-**ADR-3: Snapshot partitioning / retention strategy?**
-`model_snapshots` grows monotonically with (models × polls); every "latest" read scans it
-(`DISTINCT ON` full-table). Options: (a) monthly range partitioning on `polled_at` with
-`prune-raw-json` as the retention enforcer (already exists, `scripts/prune-raw-json.ts`);
-(b) hot `model_current` materialized table + cold historical partitions; (c) downsampling
-(old snapshots aggregated to daily). Decide at ~10⁶ snapshots or first catalog p95 breach —
-whichever comes first. The `prune-raw-json` + `prune.yml` weekly job is the seed of this policy.
+**ADR-7: Retention & downsampling policy for event-time tables.**
+`snapshots` (existing `prune-raw-json` seed), plus new `routing_attempts`,
+`digest_deliveries`, `usage_imports`, `routing_attempts` rollups. Decide
+windows (30/90d raw, rollups forever, 12mo financial default) and the
+partitioning strategy (`polled_at`/`created_at` ranges) at ~10⁶ rows or first
+p95 breach — whichever comes first. Privacy review rides along for the
+financial tables.
 
-**ADR-4: Monolith routes vs versioned public API as the product surface?**
-Legacy `/api/*` and `v1/*` overlap with different auth/rate-limit stories. Options:
-(a) freeze legacy routes, route all new development through `v1`, sunset legacy per deprecation
-policy; (b) merge into one versioned surface now; (c) keep both indefinitely with a
-compatibility test matrix. Recommendation: (a) — cheapest, matches how the team already builds
-(all feature work lands on `v1`), and the error-taxonomy work gives a natural vehicle
-(one surface to fix first).
+**ADR-8: R10 GA criteria and business posture.**
+Pilot-only is the current authorized state (ADR-010). GA needs its own
+amendment: sustained reliability bar evidence, OpenRouter-competition
+positioning decision, incident history review, support/ToS updates for
+routing traffic, and metering/billing for proxied calls. Do not let
+"pilot works" silently become "GA launched" — require the amendment vote.
