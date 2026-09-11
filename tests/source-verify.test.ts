@@ -15,7 +15,7 @@ describe('source verification policy (no network)', () => {
       expect(r.verified_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
     const datasets = new Set(refs.map((r) => r.dataset));
-    expect(datasets).toEqual(new Set(['benchmarks', 'capabilities', 'licenses']));
+    expect(datasets).toEqual(new Set(['benchmarks', 'capabilities', 'licenses', 'compliance', 'embeddings']));
   });
 
   it('verdict matrix: ok / bot-blocked-warn / dead-fail / stale-fail', () => {

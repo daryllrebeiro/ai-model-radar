@@ -76,7 +76,12 @@ describe('Phase 2.1: Price History Charts', () => {
     expect([...times].sort((a, b) => a - b)).toEqual(times);
 
     expect(result!.events.length).toBeGreaterThanOrEqual(1);
-    expect(result!.events[0].event_type).toBe('PRICE_CHANGE');
+    // Events newest-first; the local backend is shared across test files with
+    // no reset, so other suites' events for this model id may interleave —
+    // assert ordering + presence of our PRICE_CHANGE, not a positional index.
+    const times_e = result!.events.map((e) => new Date(e.detected_at).getTime());
+    expect([...times_e].sort((a, b) => b - a)).toEqual(times_e);
+    expect(result!.events.some((e) => e.event_type === 'PRICE_CHANGE')).toBe(true);
     expect(result!.current).not.toBeNull();
   });
 
