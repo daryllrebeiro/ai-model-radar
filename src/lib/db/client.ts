@@ -99,6 +99,7 @@ interface LocalDbState {
   routing_pilot_optins: Array<any>;
   probe_spend_ledger: Array<any>;
   drift_reviews: Array<any>;
+  metric_events: Array<any>;
 }
 
 /**
@@ -153,6 +154,7 @@ function emptyState(): LocalDbState {
     routing_pilot_optins: [],
     probe_spend_ledger: [],
     drift_reviews: [],
+    metric_events: [],
   };
 }
 
@@ -198,6 +200,7 @@ function getLocalState(): LocalDbState {
       routing_pilot_optins: parsed.routing_pilot_optins || [],
       probe_spend_ledger: parsed.probe_spend_ledger || [],
       drift_reviews: parsed.drift_reviews || [],
+      metric_events: parsed.metric_events || [],
     };
   } catch {
     return emptyState();

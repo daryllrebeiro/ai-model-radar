@@ -50,6 +50,7 @@ export const TABLE_MANIFEST: TableDef[] = [
   { pg: 'fk_orphans', local: 'fk_orphans', serial: true },
   { pg: 'probe_spend_ledger', local: 'probe_spend_ledger', serial: true },
   { pg: 'drift_reviews', local: 'drift_reviews', serial: true },
+  { pg: 'metric_events', local: 'metric_events', serial: true },
 ];
 
 /** Canonical restore/backup order: FK parents before children. */

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { estimateBuildVsBuy } from '@/lib/finetuning';
 import { FINETUNE_QUALITY_DISCLAIMER } from '@/types/finetuning';
+import { recordMetric } from '@/lib/db/queries';
 import { withPublicGuards } from '@/lib/route-guards';
 
 /**
@@ -39,5 +40,7 @@ export const POST = withPublicGuards(async (request: NextRequest) => {
       { status: 422 }
     );
   }
+  // Fire-and-forget success metric (N1 sink); never blocks the response.
+  void recordMetric('s6.estimate.completed');
   return NextResponse.json({ version: 'v1', disclaimer: FINETUNE_QUALITY_DISCLAIMER, estimate });
 }, { maxBytes: 256 * 1024 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { transformCode } from '@/lib/migration-codegen';
 import { MIGRATION_BEHAVIORAL_CAVEAT, SUPPORTED_PAIRS } from '@/types/migration-codegen';
+import { recordMetric } from '@/lib/db/queries';
 import { withPublicGuards } from '@/lib/route-guards';
 
 /**
@@ -43,6 +44,8 @@ export const POST = withPublicGuards(async (request: NextRequest) => {
       { status: 422 }
     );
   }
+  // Fire-and-forget success metric (N1 sink).
+  void recordMetric('s8.codegen.completed');
   return NextResponse.json({
     version: 'v1',
     review_only: true,

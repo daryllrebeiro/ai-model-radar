@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { optimizePrompt } from '@/lib/prompt-optimizer';
+import { recordMetric } from '@/lib/db/queries';
 import { withPublicGuards } from '@/lib/route-guards';
 
 /**
@@ -30,6 +31,8 @@ export const POST = withPublicGuards(async (request: NextRequest) => {
     );
   }
   const result = optimizePrompt(parsed.data);
+  // Fire-and-forget success metric (N1 sink); content itself stays session-only.
+  void recordMetric('s3.optimize.completed');
   const res = NextResponse.json({
     version: 'v1',
     privacy: 'Session-only: submitted prompt content is not persisted, not logged, and not used to improve shared heuristics.',

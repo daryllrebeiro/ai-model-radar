@@ -22,6 +22,7 @@
  *   eol.ts        model end-of-life registry
  *   spend-ledger.ts probe spend accounting (paid active-probe cycles)
  *   drift-reviews.ts S4 candidate queue (human review only)
+ *   metrics.ts S success-metric sink (fire-and-forget counts)
  */
 export * from './_shared';
 export * from './catalog';
@@ -47,3 +48,4 @@ export * from './export-connectors';
 export * from './routing';
 export * from './spend-ledger';
 export * from './drift-reviews';
+export * from './metrics';

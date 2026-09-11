@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { listDriftReviews, decideDriftReview, DriftReviewStatus } from '@/lib/db/queries';
+import { listDriftReviews, decideDriftReview, recordMetric, DriftReviewStatus } from '@/lib/db/queries';
 import { withPublicGuards } from '@/lib/route-guards';
 import { getSessionUser } from '@/lib/auth';
 import { checkSessionRateLimit, logAuthDenied } from '@/lib/api-auth';
@@ -49,5 +49,6 @@ export async function POST(request: NextRequest) {
   if (!ok) {
     return NextResponse.json({ error: 'Conflict', message: 'Review not found or already decided.' }, { status: 409 });
   }
+  await recordMetric('drift.review.decided');
   return NextResponse.json({ version: 'v1', decided: true, ...parsed.data });
 }

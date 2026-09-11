@@ -526,3 +526,16 @@ CREATE TABLE IF NOT EXISTS drift_reviews (
 );
 
 CREATE INDEX IF NOT EXISTS idx_drift_reviews_status ON drift_reviews(status, created_at DESC);
+
+-- 24. Metric events (next-steps N1) — the S success-metric sink. One row per
+-- counted occurrence (completions, votes, decisions); second threshold
+-- review reads SUMs instead of asserting zeros. Fire-and-forget writes:
+-- callers never fail a user request on a metric error.
+CREATE TABLE IF NOT EXISTS metric_events (
+    id                  SERIAL PRIMARY KEY,
+    name                VARCHAR(64) NOT NULL,
+    value               INT NOT NULL DEFAULT 1,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_metric_events_name_time ON metric_events(name, created_at DESC);
