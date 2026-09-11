@@ -48,6 +48,8 @@ export const TABLE_MANIFEST: TableDef[] = [
   { pg: 'endpoint_telemetry', local: 'endpoint_telemetry', serial: true },
   { pg: 'processed_stripe_event_ids', local: 'processed_stripe_event_ids', serial: false },
   { pg: 'fk_orphans', local: 'fk_orphans', serial: true },
+  { pg: 'probe_spend_ledger', local: 'probe_spend_ledger', serial: true },
+  { pg: 'drift_reviews', local: 'drift_reviews', serial: true },
 ];
 
 /** Canonical restore/backup order: FK parents before children. */

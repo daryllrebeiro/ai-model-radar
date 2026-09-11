@@ -20,6 +20,8 @@
  *   dlq.ts        webhook dead-letter queue
  *   evals.ts      BYO eval harness runs
  *   eol.ts        model end-of-life registry
+ *   spend-ledger.ts probe spend accounting (paid active-probe cycles)
+ *   drift-reviews.ts S4 candidate queue (human review only)
  */
 export * from './_shared';
 export * from './catalog';
@@ -43,3 +45,5 @@ export * from './compound-rules';
 export * from './case-studies';
 export * from './export-connectors';
 export * from './routing';
+export * from './spend-ledger';
+export * from './drift-reviews';

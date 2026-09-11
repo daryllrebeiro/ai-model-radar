@@ -97,6 +97,8 @@ interface LocalDbState {
   export_connectors: Array<any>;
   routing_attempts: Array<any>;
   routing_pilot_optins: Array<any>;
+  probe_spend_ledger: Array<any>;
+  drift_reviews: Array<any>;
 }
 
 /**
@@ -149,6 +151,8 @@ function emptyState(): LocalDbState {
     export_connectors: [],
     routing_attempts: [],
     routing_pilot_optins: [],
+    probe_spend_ledger: [],
+    drift_reviews: [],
   };
 }
 
@@ -192,6 +196,8 @@ function getLocalState(): LocalDbState {
       export_connectors: parsed.export_connectors || [],
       routing_attempts: parsed.routing_attempts || [],
       routing_pilot_optins: parsed.routing_pilot_optins || [],
+      probe_spend_ledger: parsed.probe_spend_ledger || [],
+      drift_reviews: parsed.drift_reviews || [],
     };
   } catch {
     return emptyState();

@@ -3,11 +3,14 @@ import {
   pruneOldRawJson,
   pruneRoutingAttempts,
   pruneUsageImports,
+  pruneProbeSpendLedger,
+  getProbeSpendSince,
   getRoutingReliability,
 } from '@/lib/db/queries';
 import {
   routingRetentionDays,
   usageRetentionDays,
+  probeSpendRetentionDays,
   retentionCutoffIso,
 } from '@/lib/retention';
 import { secretsEqual } from '@/lib/secrets';
@@ -60,13 +63,25 @@ async function handlePrune(request: NextRequest) {
       logger.warn('Usage-import retention failed:', { error: String(err) });
       usage = { error: 'retention failed (see logs)' };
     }
+    // P2-5: ledger rollup-then-prune — snapshot the rollup BEFORE deleting
+    // raw rows so budget history survives as aggregates.
+    const spendDays = probeSpendRetentionDays();
+    let spend: Record<string, unknown> = { skipped: true };
+    try {
+      const prePrune = await getProbeSpendSince(retentionCutoffIso(spendDays));
+      const pruned = await pruneProbeSpendLedger(retentionCutoffIso(spendDays));
+      spend = { window_days: spendDays, pre_prune_rollup: prePrune, ...pruned };
+    } catch (err) {
+      logger.warn('Probe-spend retention failed:', { error: String(err) });
+      spend = { error: 'retention failed (see logs)' };
+    }
 
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
       daysToKeep: days,
       prunedSnapshotsCount: result.prunedCount,
-      retention: { routing_attempts: routing, usage_imports: usage },
+      retention: { routing_attempts: routing, usage_imports: usage, probe_spend_ledger: spend },
     });
   } catch {
     return NextResponse.json(

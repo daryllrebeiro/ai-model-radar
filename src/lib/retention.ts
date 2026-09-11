@@ -23,6 +23,14 @@ export function usageRetentionDays(env = process.env): number {
   return Math.min(3650, Math.max(30, Math.floor(raw)));
 }
 
+/** P2-5 — probe-spend raw window (days). Default 90; rollups survive via
+ * getProbeSpendSince reads, so raw prune never destroys budget history. */
+export function probeSpendRetentionDays(env = process.env): number {
+  const raw = Number(env.RETENTION_PROBE_SPEND_DAYS);
+  if (!Number.isFinite(raw)) return 90;
+  return Math.min(3650, Math.max(7, Math.floor(raw)));
+}
+
 export function retentionCutoffIso(days: number, nowMs = Date.now()): string {
   return new Date(nowMs - days * 24 * 3600 * 1000).toISOString();
 }

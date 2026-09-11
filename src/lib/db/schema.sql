@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_events_detected_at ON model_events (detected_at D
 -- 3. Ingestion Runs Observability & Audit Log
 CREATE TABLE IF NOT EXISTS ingestion_runs (
     id                  BIGSERIAL PRIMARY KEY,
-    source              TEXT NOT NULL,          -- 'openrouter', 'github', 'huggingface'
+    source              TEXT NOT NULL,          -- 'openrouter', 'github', 'huggingface', 'changelog'
     started_at          TIMESTAMPTZ NOT NULL,
     finished_at         TIMESTAMPTZ,
     status              TEXT NOT NULL,          -- 'success', 'partial', 'failed'
@@ -485,3 +485,44 @@ CREATE TABLE IF NOT EXISTS routing_pilot_optins (
     approved            BOOLEAN NOT NULL DEFAULT TRUE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 22. Probe spend ledger (P1-1) — accounting for paid active-probe cycles
+-- (S4+S5). One row per model per cycle: calls made, provider errors, and
+-- estimated tokens. Budget alerts and the kill switch read this table;
+-- without it finance learns about overruns from the provider invoice.
+CREATE TABLE IF NOT EXISTS probe_spend_ledger (
+    id                  SERIAL PRIMARY KEY,
+    cycle_id            VARCHAR(64) NOT NULL,
+    model_id            TEXT NOT NULL,
+    provider            VARCHAR(64) NOT NULL DEFAULT '',
+    calls               INT NOT NULL DEFAULT 0,
+    errors              INT NOT NULL DEFAULT 0,
+    est_tokens          INT NOT NULL DEFAULT 0,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_probe_spend_time ON probe_spend_ledger(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_probe_spend_cycle ON probe_spend_ledger(cycle_id);
+
+-- 23. Drift review queue (P3) — human decision surface for S4 candidates.
+-- Only diffs flagged candidate_for_review are stored, WITH the full
+-- before/after text (evidence, not scores). No automated verdict exists:
+-- status moves pending -> confirmed/dismissed by reviewer action only.
+CREATE TABLE IF NOT EXISTS drift_reviews (
+    id                  SERIAL PRIMARY KEY,
+    cycle_id            VARCHAR(64) NOT NULL,
+    model_id            TEXT NOT NULL,
+    prompt_id           VARCHAR(64) NOT NULL,
+    prompt_version      INT NOT NULL DEFAULT 1,
+    prev_output         TEXT NOT NULL DEFAULT '',
+    curr_output         TEXT NOT NULL DEFAULT '',
+    diff_lines          JSONB NOT NULL DEFAULT '[]',
+    changed_lines       INT NOT NULL DEFAULT 0,
+    status              VARCHAR(16) NOT NULL DEFAULT 'pending',
+    reviewed_by         VARCHAR(255),
+    reviewed_at         TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (cycle_id, model_id, prompt_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_drift_reviews_status ON drift_reviews(status, created_at DESC);
