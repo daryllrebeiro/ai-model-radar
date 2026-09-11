@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { estimateBuildVsBuy } from '@/lib/finetuning';
 import { FINETUNE_QUALITY_DISCLAIMER } from '@/types/finetuning';
-import { validatePublicApiRequest, assertPayloadSize } from '@/lib/api-auth';
+import { withPublicGuards } from '@/lib/route-guards';
 
 /**
  * S6 — Build-vs-buy estimator. Cost-only; quality parity is explicitly
@@ -18,14 +18,7 @@ const bodySchema = z.object({
   small_model_id: z.string().trim().min(1).max(200),
 });
 
-export async function POST(request: NextRequest) {
-  // Audit H1: throttle compute-heavy POST like other public writes.
-  const auth = await validatePublicApiRequest(request);
-  if (!auth.allowed && auth.errorResponse) {
-    return auth.errorResponse;
-  }
-  const tooLarge = assertPayloadSize(request);
-  if (tooLarge) return tooLarge;
+export const POST = withPublicGuards(async (request: NextRequest) => {
   let json: unknown;
   try {
     json = await request.json();
@@ -47,4 +40,4 @@ export async function POST(request: NextRequest) {
     );
   }
   return NextResponse.json({ version: 'v1', disclaimer: FINETUNE_QUALITY_DISCLAIMER, estimate });
-}
+}, { maxBytes: 256 * 1024 });

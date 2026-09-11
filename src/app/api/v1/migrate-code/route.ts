@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { transformCode } from '@/lib/migration-codegen';
 import { MIGRATION_BEHAVIORAL_CAVEAT, SUPPORTED_PAIRS } from '@/types/migration-codegen';
-import { validatePublicApiRequest, assertPayloadSize } from '@/lib/api-auth';
+import { withPublicGuards } from '@/lib/route-guards';
 
 /**
  * S8 — Suggested diff only. No repo writes, no PR creation. Unsupported
@@ -18,14 +18,7 @@ const bodySchema = z.object({
   target_base_url: z.string().url().max(300).optional(),
 });
 
-export async function POST(request: NextRequest) {
-  // Audit H1+H2: throttle + reject oversized bodies BEFORE parsing.
-  const auth = await validatePublicApiRequest(request);
-  if (!auth.allowed && auth.errorResponse) {
-    return auth.errorResponse;
-  }
-  const tooLarge = assertPayloadSize(request, 256 * 1024);
-  if (tooLarge) return tooLarge;
+export const POST = withPublicGuards(async (request: NextRequest) => {
   let json: unknown;
   try {
     json = await request.json();
@@ -56,4 +49,4 @@ export async function POST(request: NextRequest) {
     caveat: MIGRATION_BEHAVIORAL_CAVEAT,
     ...result,
   });
-}
+}, { maxBytes: 256 * 1024 });

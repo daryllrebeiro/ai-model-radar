@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CANARY_BATTERY, CANARY_BATTERY_VERSION } from '@/lib/active-probe';
 import { DEFAULT_ACTIVE_PROBE_BUDGET, ACTIVE_PROBE_SCOPE_NOTE, DRIFT_EVIDENCE_NOTE } from '@/types/active-probe';
-import { validatePublicApiRequest } from '@/lib/api-auth';
+import { withPublicGuards } from '@/lib/route-guards';
 
 /**
  * S4+S5 status: battery version, budget, scope. Real generation cycles run
@@ -10,12 +10,7 @@ import { validatePublicApiRequest } from '@/lib/api-auth';
  */
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
-  // Audit H1: throttle like every other public read.
-  const auth = await validatePublicApiRequest(request);
-  if (!auth.allowed && auth.errorResponse) {
-    return auth.errorResponse;
-  }
+export const GET = withPublicGuards(async (_request: NextRequest) => {
   return NextResponse.json({
     version: 'v1',
     battery_version: CANARY_BATTERY_VERSION,
@@ -25,4 +20,4 @@ export async function GET(request: NextRequest) {
     evidence_note: DRIFT_EVIDENCE_NOTE,
     credentials: 'Dedicated PROBE_* keys required; no cycle runs without them.',
   });
-}
+});

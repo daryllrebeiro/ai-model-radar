@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getEvents } from '@/lib/db/queries';
-import { validatePublicApiRequest } from '@/lib/api-auth';
+import { withPublicGuards } from '@/lib/route-guards';
 import { computeDeprecationStats, DEPRECATION_MATURITY_MIN_PAIRS } from '@/lib/deprecation';
 
 /**
@@ -10,13 +10,7 @@ import { computeDeprecationStats, DEPRECATION_MATURITY_MIN_PAIRS } from '@/lib/d
  */
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
-  // Audit H1: this route reads up to 5000 events — throttle like every other
-  // public read instead of serving unbounded anonymous traffic.
-  const auth = await validatePublicApiRequest(request);
-  if (!auth.allowed && auth.errorResponse) {
-    return auth.errorResponse;
-  }
+export const GET = withPublicGuards(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const provider = searchParams.get('provider') || undefined;
   const events = await getEvents({
@@ -41,4 +35,4 @@ export async function GET(request: NextRequest) {
     },
     providers: filtered,
   });
-}
+});

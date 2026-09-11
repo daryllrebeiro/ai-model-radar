@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { optimizePrompt } from '@/lib/prompt-optimizer';
-import { validatePublicApiRequest, assertPayloadSize } from '@/lib/api-auth';
+import { withPublicGuards } from '@/lib/route-guards';
 
 /**
  * S3 — Prompt-cost optimizer. SESSION-ONLY: the request body is analyzed in
@@ -15,15 +15,7 @@ const bodySchema = z.object({
   target_model_id: z.string().trim().min(1).max(200),
 });
 
-export async function POST(request: NextRequest) {
-  // Audit H1+H2: throttle + reject oversized bodies BEFORE parsing (Next.js
-  // parses the full body synchronously — a multi-MB payload is a cheap DoS).
-  const auth = await validatePublicApiRequest(request);
-  if (!auth.allowed && auth.errorResponse) {
-    return auth.errorResponse;
-  }
-  const tooLarge = assertPayloadSize(request, 256 * 1024);
-  if (tooLarge) return tooLarge;
+export const POST = withPublicGuards(async (request: NextRequest) => {
   let json: unknown;
   try {
     json = await request.json();
@@ -46,4 +38,4 @@ export async function POST(request: NextRequest) {
   // Defense-in-depth: never cache optimizer responses at the edge.
   res.headers.set('Cache-Control', 'no-store');
   return res;
-}
+}, { maxBytes: 256 * 1024 });
