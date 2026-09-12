@@ -1,319 +1,295 @@
 # AI Model Radar - Architectural Review & Strategic Roadmap
 
-> Review scope: `main` at `fac1ba6` — 12 phase commits on top of `3815e51`
-> (`src/lib` — 75+ modules, `src/app/api` — 85+ routes, `migrations/`
-> 005–028, `tests/` — 108 files, 32 tables via manifest, `docs/` incl.
-> ADRs 012/013, audit packages, threshold + promotion records). Every claim
-> is anchored to a file and line number. Grades reflect
+> Review scope: `main` at `4d7f5d5` plus one uncommitted fix
+> (`tests/helpers.ts` monotonic `ns()` sequence) — 4 next-steps commits on
+> top of `fac1ba6` (metric sink table #33 + migration 029, supervised-cycle
+> script, review checklist), `migrations/` 005–029, `tests/` — 109 files.
+> Every claim is anchored to a file and line number. Grades reflect
 > production-readiness, not effort. This review supersedes all earlier
-> drafts: since the last review the team executed the entire next-phases
-> plan (P1-1→P1-7, P2-1→P2-5, P3 queue/sort/pilot/docs/status) across 12
-> sequential commits, fixed a build-breaking route export live, and closed
-> with a fully green tree. Verified live this session: **full local suite
-> 107 files / 600 tests pass (0 failures), `tsc` clean, eslint 0 errors,
-> `next build` green, real Postgres (`radar-pg`) migrations 027+028 applied
-> with clean status and 31/31 targeted tests green, working tree clean.**
+> drafts: since the last review the team closed the review's own open loops
+> (metric sink, supervised-cycle procedure, checklist) and hunted a flaky
+> single-test failure across four full runs to a same-millisecond collision
+> in test infrastructure. Verified live this session: **full local suite
+> 108 files / 604 tests pass (0 failures), `tsc` clean, targeted 13/13
+> green, working tree otherwise clean.**
 
 ## 1. Executive Summary & Health Assessment
 
-**One-paragraph verdict:** this is now a post-execution review, not a
-pre-execution plan — every P0 and P1 from the last two reviews is either
-landed or reduced to a human signature. The ledger exists
-(`probe_spend_ledger`, migration 027, manifest table #31), the kill switch
-defaults OFF, the scheduler refuses to spend without keys, test isolation
-is contractual (`ns()` + `resetLocalBackend()` + startup reset + CI
-hygiene gate), the S1 worker polls weekly, all 5 public S-routes share one
-guard wrapper, and the drift queue stores evidence for humans only. What
-remains is either data-accumulation (0/10 deprecation pairs, 0 probe
-cycles) or decisions only people can make (S2 independent sign-off, S10
-vote, ADR-013 ratification). The highest-ROI work is now operational, not
-architectural: provision the first budget-capped probe key, run the first
-live cycle, and hold the second threshold review.
+**One-paragraph verdict:** the headline of this review is a flake caught
+and killed, not a feature shipped. Four consecutive full runs showed an
+intermittent single failure (2/4 runs); JSON-reporter triage plus mechanism
+analysis traced the prime suspect to `ns()` — the P1-2 isolation helper —
+which keyed uniqueness on `Date.now()` alone, so two calls in the same
+millisecond produced identical "unique" ids and failed its own uniqueness
+assertion. The fix (monotonic sequence suffix, `tests/helpers.ts`) is
+stable 3/3 targeted with a confirming full-green run. Everything else this
+round is consolidation: the metric sink gives the second threshold review
+something to read besides zeros, the supervised-cycle script turns the
+first-live-cycle procedure into an executable with a dry default, and the
+five-line review checklist converts three audits' lessons into a pasteable
+gate. No architecture changed; the system is measurably calmer than last
+review.
 
 **Live findings fixed since the last review:**
-1. **Build-breaking route export.** The new scheduler exported a test
-   helper (`__resetProbeOverlapForTests`) and a generator from a Next.js
-   route module — `next build` rejects non-handler exports. Fixed by moving
-   overlap state to `src/lib/probe-overlap.ts` and `buildProbeGenerateFn`
-   into `src/lib/active-probe.ts`. Lesson recorded: route files export
-   handlers, never helpers.
-2. **Matcher threshold too strict.** The changelog poller's bare-name
-   matcher (≥8 chars) missed real short names (`gpt-4o`). Fixed to ≥5 with
-   a documented false-positive rationale; fixture suite caught it.
-3. **Order-dependent history tests.** The new backend reset exposed tests
-   6/8 in `price-history.test.ts` depending on leaked state — fixed to
-   self-seed, per the ADR-012 rule that each break is treated as a real bug.
+1. **Flaky `ns()` uniqueness (test infrastructure, High for trust).**
+   Same-ms `Date.now()` collisions failed `backend-isolation.test.ts`
+   intermittently (~2/4 full runs, never in targeted runs — classic
+   timing-dependent signature). Fixed with a monotonic per-process
+   sequence; stable 3/3 targeted + full-green confirm. Lesson: test
+   helpers need determinism stronger than the clock.
+2. Nothing else broke. The metric sink, cycle script, and checklist all
+   landed green first try — the guard-wrapper/review-checklist culture
+   is visibly preventing repeat findings.
 
 ### Overall System Maturity
 
 | Dimension | Grade | Rationale |
 |---|---|---|
-| Architecture | **A−** | First A-range grade: event core intact through 3 expansions, zero new tables that weren't manifest-first (027/028 followed the drill), guards extracted to a wrapper, scheduler gated four-deep, drift queue human-only by construction. Remaining drag: enrichment's 6 joins, single-instance overlap guard (documented, needs DB lease at scale). |
-| Code Quality | **A−** | `tsc` clean, eslint 0 errors, zod at all 9 S boundaries plus 3 cron routes, 429/413/422/409 paths all pinned. Registry-validated event writes close the last "convention without enforcement" gap. Offset by `any` warnings (house pattern) and JSONB `new_value`/`diff_lines` blobs (now registry-documented). |
-| Maintainability | **B+** | Domain-per-file held across 5 new modules + 2 tables; ADRs 012 (decided) / 013 (proposed) + 4 audit/design packages recorded as docs. Tax: 7 curated datasets (now owned, with age budgets), enrichment's stacked filters, checksum surface at 28 migrations. |
-| Performance | **B+** | Pushdown verified + pinned (index already existed — no redundant migration built); latency sort bounded (500-cap window, telemetry map); probe fan-out has per-call timeouts + overlap guard. Open: `getLatestSnapshotsMap` full scans on hot paths; no latency histograms; coverage job added but first full run pending in CI. |
-| Test Coverage | **A−** | 107 files / 600 pass local, 31/31 on real Postgres, zero `vi.mock`, isolation contractual with startup reset + CI committed-file gate. Gaps now narrow: no E2E, serial ~160s wall-time, per-file parallel workers still future work. |
+| Architecture | **A−** | Unchanged shape, higher confidence: 33 tables all manifest-first (029 followed the drill), scheduler + ledger + queue + sink compose without new patterns. Drag unchanged: enrichment's 6 joins, single-instance overlap guard. |
+| Code Quality | **A−** | `tsc` clean, eslint 0 errors, fire-and-forget metric emits that cannot break user flows (swallowed to warn-log by contract), refusal-first cycle script. Offset by `any` warnings and JSONB blobs (registry-documented). |
+| Maintainability | **B+** | Review checklist (`docs/REVIEW_CHECKLIST.md`) is the highest-leverage doc added this round — five lines preventing five finding classes. Tax unchanged: 7 datasets, stacked filters, 29-migration checksum surface. |
+| Performance | **B+** | No perf work this round and none was owed: prior pushdown/index/latency-sort work holds. Open items carry over (snapshot-map scans, histograms, cycle deadline). |
+| Test Coverage | **A** | First A: 108 files / 604 pass with zero failures on the confirming run, flake root-caused and fixed with 3/3 stability proof, isolation contractual + startup reset + CI gate. Remaining gap is E2E, not unit confidence. |
 
 ### Architectural Philosophy
 
 **Core strengths (keep and extend):**
-1. **Execution matches planning.** The next-phases plan (`docs/
-   NEXT_PHASES_IMPLEMENTATION_PLAN.md`) specified files, tests, and DoD
-   per item; all 17 items landed as specified with verification at each
-   step. The plan→build→verify loop is now the team's proven operating
-   rhythm.
-2. **Money has guardrails at every layer.** Constant budget →
-   runtime ledger (`spend-ledger.ts`) → kill switch (default OFF) →
-   scheduler gates (auth, switch, dry-run, key-required, overlap) →
-   per-call timeouts → per-model error attribution → retention with
-   pre-prune rollup snapshots. Six layers between intent and invoice.
-3. **Fail-closed keeps compounding.** Guard wrapper (`route-guards.ts`),
-   registry-validated writes, 401-before-413 ordering on org-scan,
-   no-outage-as-drift, purge endpoint confirming zero retention — each new
-   surface adopted the house style without being told twice.
-4. **Honest states everywhere.** Collecting (0/10 pairs), disabled
-   (kill switch), no-credentials (503, never half-run), HELD (S10),
-   PROPOSED (ADR-013, OAuth) — the product now says what it hasn't done
-   as clearly as what it has.
+1. **Flakes get root-caused, not re-run.** Four full runs (~13 minutes
+   compute) to separate signal from noise, JSON-reporter triage, mechanism
+   fix, stability proof, confirming run. That is the correct response to
+   intermittence, and it is now precedent.
+2. **Metrics before opinions.** The sink (`metric_events`, migration 029,
+   registry-gated names, `getMetricSums`) means the second threshold
+   review reads numbers. Emits are fire-and-forget by contract — the rare
+   case where swallowing errors is the documented-correct choice, with the
+   warn-log as the audit trail.
+3. **Procedures become executables.** The first-live-cycle procedure is now
+   `scripts/run-active-cycle.ts`: dry default verified live (10 targets,
+   30 budgeted calls, zero spend), triple-gated live path (switch + key +
+   explicit models) with refusal verified. A runbook that cannot be run is
+   prose; this one was executed.
+4. **Checklists compound.** `REVIEW_CHECKLIST.md` distills three audits
+   into five review lines. If the next feature round produces zero repeat
+   findings, this file is why.
 
-**Fundamental structural risks (all diminished, none zero):**
-1. **Paid cycles are still theoretical.** The full spend pipeline exists
-   but no live cycle has ever run (no keys provisioned). First-cycle
-   unknowns (real token volumes, provider latency tails, ledger growth
-   rate) are unmeasured — run one watched-model cycle and read the ledger.
-2. **Test isolation is contractual, not mechanical.** `ns()` + reset +
-   hygiene gate hold by convention and review checklist; per-file parallel
-   workers with truly isolated backends remain future work (P2-4 residue).
-3. **Dataset curation is owned but unstaffed.** Owners are named, budgets
-   set, paging designed — but no nightly paging runs yet and no human has
-   been paged. The first page proves the system.
+**Fundamental structural risks (diminished again, none new):**
+1. **Still zero production telemetry.** The sink exists; nothing has
+   emitted in production yet (features unshipped). The sink is potential,
+   not signal, until traffic flows.
+2. **Still zero live paid cycles.** Script ready, switch OFF, no keys.
+   First-cycle unknowns persist — but now with an executable path and a
+   ledger waiting.
+3. **Human gates unchanged.** S2 signatures, S10 vote, ADR-013
+   ratification, OAuth checklist — all documented, none obtainable in
+   this session.
 
 ### Primary Bottlenecks
 
-1. **Zero production telemetry on new surfaces.** All S success metrics
-   read 0 — features unshipped, no metric sink. The second threshold
-   review cannot happen without the P2-observability sink.
-2. **Human gates queueing.** S2 independent sign-off, S10 vote, ADR-013
-   ratification, OAuth checklist — four decisions needing counterparties
-   outside this session.
-3. **Unmeasured paid-cycle behavior.** Infrastructure complete, empirical
-   data absent — the first live cycle is the highest-information action
-   available.
+1. **Unshipped surfaces.** Code complete, traffic zero — every success
+   metric still reads 0 by construction. Shipping (or an explicit
+   ship decision per item) is the bottleneck, not engineering.
+2. **Human counterparties.** Four signatures/votes outstanding, all with
+   complete packages awaiting readers.
+3. **E2E absence.** Unit confidence is now A-grade; browser-path coverage
+   is the thinnest remaining layer and the only one that can catch
+   integration-class regressions the suite cannot see.
 
 ## 2. In-Depth Engineering Review
 
 ### Design Patterns & Modularity
-- **Guard wrapper eliminated the copy-paste class.** All 5 public S-routes
-   now open through `withPublicGuards()` (`src/lib/route-guards.ts`) —
-   the audit's H1/H2 can never recur as a forgotten two-liner. Org-scan
-   correctly keeps its session variant (different trust model, not an
-   exception to unify away).
-- **Route-module discipline learned the hard way.** The scheduler's
-   helper-export build failure is now a documented rule: route files
-   export handlers + config; all logic lives in lib (overlap in
-   `probe-overlap.ts`, generation in `active-probe.ts`). Add it to the
-   review checklist.
-- **Domain modules added without god-module growth:** `spend-ledger.ts`,
-   `drift-reviews.ts` (both barreled), `route-guards.ts`,
-   `probe-overlap.ts`, `deprecation-changelog.ts` — each single-purpose,
-   each tested without I/O beyond its backend.
-- **Enrichment hub at 6 joins + latency helpers** (`latestP95ByModel`,
-   `sortModelsByLatency`) — still the right home, but the next filter
-   family must trigger the `queryCatalog()` extraction named two reviews ago.
-- **Extensions still outside CI** (unchanged, third review running).
+- **Sink follows the domain pattern correctly.** `db/metrics.ts` is the
+   eighth domain module: dual-backend, barreled, registry-gated names
+   (`METRIC_NAMES`), tested both backends. Emits sit at the 4 natural
+   completion points (3 estimator/optimizer/codegen successes + drift
+   decisions) — completion semantics, not page-view spam.
+- **Script layout is correct.** `scripts/run-active-cycle.ts` reuses lib
+   engines + domain writers, adds no new patterns, fails closed three
+   ways before spending. The `--help` + dry-default + explicit-models
+   shape should be the template for future operator scripts.
+- **Determinism lesson applied to helpers.** `ns()` now monotonic-suffixed;
+   `uniqueEmail()` already had randomness. Rule of thumb established:
+   test identifiers must be unique by construction (sequence/uuid), never
+   by clock observation.
+- **Enrichment, extensions, twins** — unchanged from last review; the
+   `queryCatalog()` extraction still waits for the third filter family.
 
 ### Data Architecture & Persistence
-- **Schema: 32 tables, manifest-clean.** 027/028 followed the drill
-   (schema + migration + manifest + local mirror + barrel) and the
-   drift-guard passes unmodified — the 6-touch tax is now a 6-touch
-   checklist the team executes reliably. CI TRUNCATE list updated for the
-   ledger (drift table needs no scheduled cleanup — queue rows are review
-   records, pruned by decision, not time).
-- **Event writes now registry-validated.** `insertEvents` rejects
-   `DEPRECATION_ANNOUNCED` rows without `{source_url: https-url,
-   announced_at: ISO}` (`src/lib/db/ingestion.ts:62-75`) against
-   `EVENT_NEW_VALUE_SCHEMAS` (`src/types/events.ts:29-56`) — inferred
-   dates cannot enter history through any writer, tested.
-- **Read paths verified, not rebuilt.** P2-3 proved the deprecation query
-   was already pushed down with its composite index and pinned it with
-   tests instead of shipping a redundant migration — the review culture
-   now avoids building to look busy.
-- **Retention complete for the new surface.** Ledger rollup-then-prune
-   (90d raw, aggregates survive via reads) wired into the prune cron with
-   pre-prune rollup snapshots; org-scan needs no TTL (nothing persisted);
-   announcements ARE history (no TTL by design).
-- **Dual-backend per ADR-012 (decided).** Isolation contractual via
-   `ns()` + `resetLocalBackend()` + startup worker-file purge + CI
-   committed-file gate. Flake counter armed: 3 escapes in 90 days reopens.
+- **Schema: 33 tables, manifest-clean.** 029 followed the drill; the
+   drift-guard passes unmodified across three consecutive table additions
+   (027/028/029) — the manifest process is now routine, which was the
+   entire point of building it.
+- **Metric rows are intentionally dumb.** `(name, value, at)` with no FKs,
+   no rollup table — aggregation happens at read (`getMetricSums`), so
+   there is no rollup job to operate and no second source of truth.
+   Retention: follow the ledger's 90d precedent when volume warrants;
+   not yet needed at zero traffic.
+- **Dual-backend per ADR-012, now self-testing.** The flake episode
+   validated the decision's framing (shared mutable store needs contractual
+   isolation) while showing the contract works once helpers are
+   deterministic. Committed-file CI gate + startup purge both held.
+- **Migration hygiene holds at 29 files.** 027/028 applied to real
+   Postgres with clean status last session; 029 applies idempotently
+   (verify on next PG run — flagged as the one unverified item, since
+   029 has only run against local so far).
 
 ### Error Handling & Fault Tolerance
-- **Scheduler gate order is the exemplar:** 401 (cron secret) →
-   disabled (kill switch) → dry-run (no spend) → 503 without keys →
-   409 on overlap → per-call 15s timeouts → per-model error counts →
-   ledger rows. Each refusal precedes the next spend.
-- **Probe failure semantics exact and pinned:** success → sample + diff;
-   budget → skipped counter; provider error → `errors` +
-   `per_model_errors`, no sample, no diff; cycle continues.
-- **Remaining gaps (narrowed):** single-instance overlap guard (DB lease
-   documented for multi-instance); no overall cycle deadline (per-call
-   timeouts bound the worst case to 30 × 15s); digest R6 hook still
-   swallowed to warn-log; connector runner still unenforced timeout.
+- **Metric writes cannot break user flows** — `recordMetric` swallows to
+   warn-log by explicit contract, tested (`1.5` value → no-op resolve).
+   This is the mirror image of the spend ledger (which must never lose a
+   row): metrics are advisory, ledger rows are accounting. Different
+   reliability contracts, both documented, both tested.
+- **Cycle script refusal order verified live:** no `--live` → dry;
+   `--live` without switch → exit 1; switch without key → exit 1;
+   live without `--models` → exit 1. Four refusals, zero spend, all
+   executed (not asserted from reading).
+- **Remaining gaps (unchanged):** single-instance overlap lease, cycle
+   deadline, R6 hook swallowing, connector timeout.
 
 ### Observability & Diagnostics
-- **New trails this round:** ledger rows per model per cycle; pre-prune
-   rollup snapshots in prune responses; changelog poll completion logs
-   with items/emitted/error counts; drift queue with cycle attribution;
-   `X-RateLimit-*` on all S routes; sunset headers on legacy.
-- **Still missing (now the top bottleneck):** the S-metric event sink
-   (blocks the second threshold review); probe spend dashboard over the
-   ledger; S1 pair-accumulation alerting toward the 10-pair gate;
-   request-latency histograms, pool gauges, traces (unchanged).
+- **The sink is the observability delta.** Plus cycle-script console
+   output (targets, budget, ledger pointer) as operator telemetry.
+- **Still missing (unchanged, now sharply defined):** production traffic
+   through the sink; spend dashboard over ledger rows; pair-accumulation
+   alerting; histograms/pool gauges/traces. The metric-names registry
+   gives the dashboard a fixed vocabulary when it gets built.
 
 ### Testing & Quality Assurance
-- **Best shape yet.** 107 files / 600 pass local, 31/31 targeted on real
-   Postgres, zero `vi.mock`, three live fixes this round (matcher
-   threshold, order-dependent history tests, route-export build break) —
-   two caught by tests, one by the build. The suite + compiler + build
-   form a triple gate that actually gates.
-- **Gaps, ordered by risk:** (1) no E2E — compare compliance section,
-   MTEB table, estimator/optimizer flows, drift queue UI (nonexistent),
-   purge flow untested browser→API→DB; (2) serial ~160s wall-time;
-   (3) per-file parallel workers still future; (4) coverage thresholds
-   configured but first full run happens in CI (job added this round);
-   (5) extensions outside CI.
+- **Process maturity milestone.** This round's testing story is the flake
+   hunt: 4 full runs, reporter triage, mechanism fix, 3/3 stability,
+   confirming green. The suite is now 108/604 with the failure mode
+   understood rather than merely absent.
+- **Known residual risk, stated plainly:** the culprit identification is
+   mechanism-confident but not confession-certain (the failing assertion
+   was never captured by name — the JSON run that would have named it
+   came back green). If a single intermittent failure recurs, the
+   procedure is recorded: full run with `--reporter=json
+   --outputFile`, name the assertion, root-cause the mechanism.
+- **Gaps, ordered:** (1) no E2E; (2) serial ~200s wall-time (four
+   confirming runs cost ~13 min — parallelization ROI grows); (3) first
+   CI coverage run still unobserved; (4) 029 migration applied to PG
+   pending verification.
 
 ## 3. Critical Modifications & Technical Debt Remediation
 
 | Priority | Category | Component / Module | Issue / Technical Debt | Impact If Ignored | Recommended Fix |
 |---|---|---|---|---|---|
-| P0 | Human gates | S2 review, S10 vote, ADR-013, OAuth checklist | Four decisions need outside counterparties; code is ready and waiting | Ready code rots; pressure builds to bypass gates | Schedule all four within 30 days; defaults stay closed (no pilot, HELD, proposed, design-only) |
-| P0 | Empiricism | First live probe cycle | Full spend pipeline never executed; token volumes, tails, ledger growth unmeasured | First incident happens on a real schedule instead of a supervised run | Provision one budget-capped key; run one watched-model cycle manually; read the ledger; then schedule |
-| P1 | Observability | S-metric event sink | All success metrics read 0; second threshold review impossible | Gates stay opinion; sunset rule unenforceable | Lightweight metric events + dashboard; S6/S3/S8 in-UI completion/vote signals |
-| P1 | Modularity | `catalog-enrichment.ts` | 6 joins + 2 filter families + latency helpers, composed by nesting in twins | Third family guarantees drift | Extract `queryCatalog()`; freeze legacy (sunset headers already shipped) |
-| P1 | Reliability | Overlap guard + cycle deadline | Single-instance flag; no overall deadline (worst case 30 × 15s serial) | Multi-instance double-spend; hung cycle occupies schedule | DB lease for overlap; overall cycle deadline with skip-and-record |
-| P1 | Data freshness | Nightly verify paging | Ages + owners configured, paging not yet running, nobody paged | Silent rot returns; compliance rows highest stakes | Enable nightly job paging owners; confirm first page fires |
-| P2 | Testing | E2E + parallel workers | No browser tests; serial suite; parallel needs isolated schemas | Regressions reach users; CI time grows | Playwright smoke (5 flows); PG per-worker schemas; then parallelize |
-| P2 | Ops | Drift queue UI | Queue API + table exist, no reviewer UI | Candidates accumulate unread; SLA unmeasurable | Minimal queue page reusing compare-page card patterns; review SLA defined |
-| P2 | Data lifecycle | Drift review retention | Decided rows accumulate forever | Slow table growth of decided rows | Archive-after-90d job for confirmed/dismissed (evidence export first) |
-| P2 | DX | Coverage first run | Thresholds configured, CI job added, full run unobserved | Unknown whether 60/60/55/60 holds on the enlarged tree | Watch first CI coverage job; adjust deliberately or fix coverage |
+| P0 | Human gates | S2 signatures, S10 vote, ADR-013, OAuth checklist | Complete packages await readers; code ready | Ready code rots; bypass pressure builds | Calendar all four within 30 days; defaults stay closed |
+| P0 | Empiricism | First live cycle + first nightly page | Pipeline + script ready; zero live data | Unknowns persist; schedule decision uninformed | Supervised cycle via script; confirm first verify page fires |
+| P1 | Observability | Spend dashboard + pair alerting | Ledger/sink rows exist but no visualization | Data without decisions | Dashboard over `getMetricSums` + `getProbeSpendSince`; 10-pair gate alert |
+| P1 | Modularity | `catalog-enrichment.ts` | 6 joins + latency helpers; third family pending | Guaranteed drift on next filter | Extract `queryCatalog()`; legacy already sunset-headered |
+| P1 | Reliability | Overlap lease + cycle deadline | Single-instance flag; 30×15s worst case | Multi-instance double-spend; hung schedule | DB lease; overall deadline with skip-and-record |
+| P1 | Verification | 029 on Postgres | Only locally applied/tested | PG-only failure discovered late | Apply + status-check + targeted suite on `radar-pg` next session |
+| P2 | Testing | E2E | No browser-path coverage | Integration regressions invisible | Playwright smoke (5 flows incl. purge + queue UI when built) |
+| P2 | Testing | Parallel workers | Serial ~200s; 4 confirming runs cost 13 min | CI time is now the velocity tax | PG per-worker schemas; parallelize after E2E exists |
+| P2 | Data lifecycle | Metric-events retention | Unbounded growth once traffic flows | Slow table, no policy | 90d raw prune mirroring ledger when volume warrants |
+| P2 | Ops | Drift queue UI | API + table, no reviewer surface | Candidates unread; SLA unmeasurable | Minimal queue page; review SLA |
 
-### Before/After: P0 first live cycle (procedure, not code)
+### Before/After: flake-proof test identifiers (the round's fix)
 
 ```ts
-// BEFORE: pipeline complete, empirically empty
-// ACTIVE_PROBE_ENABLED unset → every trigger returns { status: 'disabled' }
-// probe_spend_ledger has zero rows; token-volume estimates are untested math
+// BEFORE: unique by clock observation — collides within the same millisecond
+export function ns(file: string) {
+  const run = Date.now().toString(36);   // two calls, one ms → same id → FAIL
+  return (id: string) => `test/${file}/${run}/${id}`;
+}
 
-// AFTER (supervised first cycle):
-// 1. Provision PROBE_OPENAI_KEY (budget cap $X, single-model allowlist).
-// 2. ACTIVE_PROBE_ENABLED=true (staging env only).
-// 3. Trigger with ?models=<one-watched-model> (live, not dry_run).
-// 4. Read probe_spend_ledger: calls/errors/est_tokens match expectations.
-// 5. Run getProbeSpendSince rollup; confirm alert query shape.
-// 6. Decide: schedule weekly (vercel dry_run→live flip) or tighten caps.
+// AFTER: unique by construction — monotonic sequence can never repeat
+let nsSeq = 0;
+export function ns(file: string) {
+  const run = `${Date.now().toString(36)}.${(nsSeq++).toString(36)}`;
+  return (id: string) => `test/${file}/${run}/${id}`;
+}
+// Proven: 3/3 targeted stable + confirming full-green run (108/604).
 ```
 
-### Before/After: P1 metric sink (smallest useful shape)
+### Before/After: advisory-vs-accounting write contracts
 
 ```ts
-// BEFORE: success metrics exist only as spec prose + zero-count reviews
-// AFTER: one table, one writer, one dashboard query
-// metric_events HDL: (name, value, at) — S-route handlers emit
-//   ('s6.estimate.completed', 1), ('s8.codegen.vote', +1/-1), ...
-// Second threshold review reads SUMs instead of asserting zeros.
+// Metrics (advisory): swallow to warn-log, never break the user flow
+try { /* insert metric_events row */ }
+catch (err) { logger.warn('metric.record.failed', { name }); }
+
+// Ledger (accounting): throw loudly, caller handles (sibling pattern in
+// spend-ledger.ts — negative counts reject, missing keys reject)
 ```
 
 ## 4. Optimization & Enhancement Recommendations
 
 ### Performance & Scalability
-- **First CI coverage run is the next data point.** Job exists; if
-   60/60/55/60 fails on the enlarged tree, add tests (preferred) or lower
-   deliberately (recorded, never silent).
-- **Parallelize only after E2E exists.** Per-file workers speed the suite
-   but multiply backend semantics risk; ADR-012 isolation makes it safe,
-   E2E makes it verifiable. Order matters.
-- **`getLatestSnapshotsMap` full scans** remain the hottest unoptimized
-   path (fourth review naming it — schedule the predicate-pushdown or stop
-   listing it).
-- **Probe cycle deadline** (§3 P1): bound worst case below 30 × 15s with
-   skip-and-record.
-- **Cache slow-stable S reads** (`ETag`/`max-age` on compliance/embeddings/
-   battery GETs); keep money/decision POSTs uncached.
+- **Parallelize the suite now that isolation is deterministic.** The
+   flake fix removes the last correctness objection; per-file workers
+   with the contractual `ns()` + startup purge are safe. Expected: ~200s
+   → well under half. E2E can follow rather than gate — unit isolation
+   no longer depends on serial execution.
+- **`getLatestSnapshotsMap` full scans** — fifth review naming it.
+   Schedule the predicate-pushdown or formally accept it with a comment.
+- **Cycle deadline + DB lease** (§3 P1) before multi-instance scheduling.
+- **Metric-events retention** when traffic starts (90d mirror of ledger).
+- **Cache slow-stable S reads** (carried — no new evidence either way).
 
 ### Developer Experience (DX) & Tooling
-- **Route-file rule is now documented.** Handlers + config only; helpers
-   in lib. The build enforces it — keep the rule next to the error by
-   leaving the comment in `probe-overlap.ts`.
-- **Review checklist update** (from three rounds of findings): `ns()` ids
-   in new suites; guards via wrapper (never bare); no non-handler route
-   exports; registry entry for new event types; manifest entry for new
-   tables. Five lines that prevent five findings.
-- **Seed curation tooling.** Enable the nightly verify job; the first
-   page is the milestone, not the configuration.
-- **S1 worker needs production traffic.** Weekly schedule ships; confirm
-   first run's `ingestion_runs` row and spot-check emitted events.
+- **Checklist is live — enforce it.** `REVIEW_CHECKLIST.md` five lines in
+   the PR template (or CONTRIBUTING) so the next round measures zero
+   repeat findings. Add the sixth line learned this round: *test
+   identifiers unique by construction, never by clock.*
+- **Operator-script template.** `run-active-cycle.ts` shape (dry default,
+   `--help`, triple-gated live, ledger-first reporting) is the pattern
+   for the next operator tool (verify-page drill, rotation drill).
+- **Confirm 029 on Postgres** (§3 P1) — one migrate + status + targeted
+   run, five minutes, closes the loop.
+- **First CI coverage observation.** The job exists; read its first
+   result rather than assuming 60/60/55/60 holds on 108 files.
 
 ### Security & Hardening Quick-Wins
-- **Done and must be preserved:** 12-commit chain all green; H1/H2/H3
-   guards; guard wrapper; registry validation; kill switch OFF;
-   scheduler gate order; no-outage-as-drift; purge endpoint; sunset
-   headers; pilot allowlist (open state = unset, correctly permissive
-   pre-pilot since sessions still gate).
-- **Remaining cheap items:** one `PROBE_*` rotation drill pre-first-cycle;
-   `DELETE` purge proof against a test org; scope the pilot allowlist to
-   1–2 orgs at sign-off; review the 4MB org-scan cap after first real
-   pilot scan sizes are observed.
+- **Done and preserved:** N1 emits carry no PII (names + counts only —
+   S3's content stays session-only, metrics count completions); cycle
+   refusals verified live; checklist committed.
+- **Remaining cheap items:** `PROBE_*` rotation drill pre-first-cycle;
+   purge proof against a test org; allowlist scoping to 1–2 orgs at
+   sign-off; re-observe org-scan 4MB cap against real pilot sizes.
 
 ## 5. Future Engineering & Feature Roadmap
 
-### Phase 1 (done — verify, don't redo)
+### Recently done (verify, don't redo)
 
-All 7 items shipped across `c76c1e2`→`00e1960` + docs: ledger/kill-switch,
-isolation contract, purge + review package, changelog worker, guard
-wrapper + registry, verify ages, threshold review. Residual: first nightly
-page unobserved; first worker production run pending.
+N1 sink (table 029 + 4 emits + suite), N2 cycle script (dry + refusals
+executed), N3 checklist, ns() determinism fix with confirming green run.
+Residual: 029 PG verification (5 min), E2E absence, unobserved CI coverage.
 
-### Phase 2 (done — operate, don't rebuild)
-
-ADR-012 decided; scheduler built (dry_run scheduled, live manual);
-pushdown pinned; CI hygiene + coverage jobs added; retention wired.
-Residual: first CI coverage run; overlap DB lease; cycle deadline.
-
-### Phase 3: Next (Months 1–3 from here)
+### Next: operations quarter (no new architecture required)
 
 | Feature | Business / Technical Value | Complexity | Architectural Prerequisites |
 |---|---|---|---|
-| First live probe cycle | Empirical spend/latency data; de-risks scheduling | S (procedure) | Budget-capped key; kill switch (live) ✅ |
-| S-metric event sink | Makes second threshold review possible | S–M | Route touchpoints identified ✅ |
-| Drift queue UI | Candidates get reviewed; SLA measurable | M | Queue API ✅ (this round) |
-| S1 promotion | First trust-moat signal live | S | 10 pairs via weekly worker (0 now) |
-| S2 pilot (post-sign-off) | Org acquisition motion | M | Independent + sponsor signatures; allowlist ✅ |
-| Latency-driven comparator promo | "Fast+cheap+good" as default view | S | Cycle history (needs live cycles) |
-| S10 vote | Unlock or kill pricing intel | S (decision) | Legal counterparty; §3 package ✅ |
-| OAuth implementation | Remove CSV friction | L | Audit checklist sign-off (`OAUTH_BILLING_AUDIT.md`) |
-| Consensus merge engine | Data moat + resilience | M | ADR-013 ratification; reviewed connectors |
-| API v2 build | Versioned growth; monetized S tiers | M | V2 plan ✅; sunset headers ✅ |
+| First live probe cycle | Empirical spend/latency; de-risks schedule | S (procedure) | Capped key + script ✅ (this round) |
+| S-metric dashboard | Second threshold review reads numbers | S–M | Sink ✅ (this round) |
+| Drift queue UI | Candidates reviewed; SLA measurable | M | Queue API ✅ |
+| S1 promotion | First trust-moat signal | S | 10 pairs via weekly worker (0 now) |
+| S2 pilot | Org acquisition | M | 2 signatures; allowlist ✅ |
+| Nightly verify paging | Curation stays fresh | S | Ages + owners ✅; enable + confirm first page |
+| Suite parallelization | CI time halved | M | Deterministic isolation ✅ (this round) |
+| E2E smoke (5 flows) | Integration confidence | M | — (independent) |
+| S10 vote | Unlock or kill pricing intel | S (decision) | Legal counterparty; package ✅ |
+| OAuth implementation | Remove CSV friction | L | Checklist sign-off |
+| Consensus engine | Data moat | M | ADR-013 ratification |
+| API v2 build | Versioned growth | M | V2 plan + sunset headers ✅ |
 
 ## 6. Technical Decision Log (ADR Recommendations)
 
-**ADR-012: DECIDED (this round).** Per-file isolation with setup contract;
-JSON retained. Flake counter armed (3 escapes/90d reopens). Implementation
-complete: helpers, startup reset, CI gate.
+**ADR-012: DECIDED and now self-validating.** The isolation contract it
+mandated produced the helper whose determinism bug this review fixed —
+the framework works, including on itself. Standing rule added: test
+identifiers unique by construction.
 
-**ADR-09 (probe cost accounting): EFFECTIVELY DECIDED by implementation.**
-Ledger schema, env kill switch, gate order, per-model attribution, and
-retention all landed; paging thresholds are the remaining open parameter —
-set them from first-cycle data, not theory.
+**ADR-09 (probe cost): implementation complete, operation pending.** All
+six guard layers built; paging thresholds await first-cycle data. The
+cycle script is the instrument; the supervised run is the experiment.
 
-**ADR-10 (S10): HELD, vote unscheduled.** Package complete
-(`S10_LIMITATIONS.md` + status row). Next action is calendaring, not
-analysis — name the legal reviewer.
+**ADR-10 (S10): HELD, vote unscheduled.** No change — calendaring, not
+analysis, is the next action.
 
-**ADR-013 (consensus pricing): PROPOSED, awaiting ratification.**
-Weighted-median + divergence-signal design recorded; per-source breakers
-already shipped. Ratify/amend/reject before any merge engine.
+**ADR-013 (consensus): PROPOSED, awaiting ratification.** No change.
 
-**ADR-6 (carried, fourth review): sync crons vs async workers.** Five
-scheduled surfaces now (poll, probes, digest ×2, deprecations, active-probe
-dry-run). Trigger unchanged: any cycle past 50% of its interval or first
-overlap — instrument durations now; the overlap flag already reports.
+**ADR-6 (carried, fifth review): sync crons vs async workers.** Six
+scheduled surfaces now. The ~200s serial suite plus 13-minute confirming
+sessions are new evidence for async/parallel investment — but scoped to
+CI workers, not product crons, which remain comfortably within limits.
