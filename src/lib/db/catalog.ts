@@ -11,6 +11,14 @@ import { isPostgres, getPgPool, getLocalState } from './client';
 import { extractProvider } from '../utils';
 import { getEvents } from './events';
 import { toIsoString } from './_shared';
+import {
+  AttributeFilters,
+  applyAttributeFilters,
+  hasAttributeFilters,
+  applyCategoryFilter,
+  sortModelsByLatency,
+} from '../catalog-enrichment';
+import { ACTIVE_PROBE_SCOPE_NOTE } from '@/types/active-probe';
 
 /**
  * Returns latest snapshot per model_id
@@ -79,8 +87,7 @@ export async function getKnownModelIds(): Promise<Set<string>> {
 /**
  * Returns current models directory list
  */
-export async function getModelCurrentList(params: {
-  search?: string;
+export async function getModelCurrentList(params: {  search?: string;
   provider?: string;
   isFree?: boolean;
   sortBy?: 'name' | 'price' | 'context' | 'updated';
@@ -209,6 +216,72 @@ export async function getModelCurrentList(params: {
   const paginated = models.slice(offset, offset + limit);
 
   return { models: paginated, total };
+}
+
+export interface CatalogQueryOptions {
+  search?: string;
+  provider?: string;
+  isFree?: boolean;
+  sortBy?: 'name' | 'price' | 'context' | 'updated' | 'latency';
+  sortOrder?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+  filters?: AttributeFilters;
+  category?: string;
+  /**
+   * Injected latest-p95 provider (keeps enrichment DB-free): the route
+   * supplies a closure over getRecentEndpointTelemetry when sortBy is
+   * 'latency'. Absent + latency requested → latency sort is skipped, never
+   * guessed.
+   */
+  fetchLatencyP95?: () => Promise<Map<string, number>>;
+}
+
+/**
+ * Single catalog entry point shared by the legacy `/api/models` and
+ * `v1/models` twins (ADR-4: no third copy). Encapsulates the bounded-window
+ * read (500 = catalog cap), attribute + category filters, latency sort,
+ * and pagination so `total` always reflects the filtered set.
+ */
+export async function queryCatalog(opts: CatalogQueryOptions = {}): Promise<{
+  models: ModelCurrent[];
+  total: number;
+  latencyScope?: string;
+}> {
+  const {
+    search,
+    provider,
+    isFree,
+    sortBy = 'name',
+    sortOrder = 'asc',
+    limit = 100,
+    offset = 0,
+    filters = {},
+    category = 'all',
+  } = opts;
+  const latencySort = sortBy === 'latency';
+  const needsWindow = hasAttributeFilters(filters) || (category !== 'all' && category !== undefined) || latencySort;
+  const data = await getModelCurrentList({
+    search,
+    provider,
+    isFree,
+    sortBy: (latencySort ? 'name' : sortBy) as 'name' | 'price' | 'context' | 'updated',
+    sortOrder,
+    limit: needsWindow ? 500 : limit,
+    offset: needsWindow ? 0 : offset,
+  });
+  let models = applyCategoryFilter(applyAttributeFilters(data.models, filters), category);
+  let latencyScope: string | undefined;
+  if (latencySort) {
+    if (opts.fetchLatencyP95) {
+      models = sortModelsByLatency(models, await opts.fetchLatencyP95());
+      latencyScope = ACTIVE_PROBE_SCOPE_NOTE;
+    }
+    // Without telemetry the catalog order stands — never fabricate latency.
+  }
+  const total = needsWindow ? models.length : data.total;
+  const page = needsWindow ? models.slice(offset, offset + limit) : models;
+  return { models: page, total, latencyScope };
 }
 
 /**

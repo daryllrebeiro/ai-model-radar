@@ -1,9 +1,8 @@
 import { NextRequest } from 'next/server';
-import { getModelCurrentList, getRecentEndpointTelemetry } from '@/lib/db/queries';
+import { queryCatalog, getRecentEndpointTelemetry } from '@/lib/db/queries';
 import { validatePublicApiRequest, apiJsonResponse } from '@/lib/api-auth';
 import { modelsQuerySchema } from '@/lib/validation/api-schemas';
-import { applyAttributeFilters, enrichModels, hasAttributeFilters, applyCategoryFilter, latestP95ByModel, sortModelsByLatency } from '@/lib/catalog-enrichment';
-import { ACTIVE_PROBE_SCOPE_NOTE } from '@/types/active-probe';
+import { enrichModels, latestP95ByModel } from '@/lib/catalog-enrichment';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,32 +39,25 @@ export async function GET(request: NextRequest) {
     hipaaEligible: (parsed.data as any).hipaa_eligible as boolean | undefined,
     euResidency: (parsed.data as any).eu_residency as boolean | undefined,
   };
-  const hasAttrFilter = hasAttributeFilters(filters);
-
-  // When present, read a bounded window (500 = catalog cap) then filter +
-  // paginate in Node so `total` reflects the filtered set. Latency sort is
-  // always Node-side (telemetry lives outside the catalog query).
   const latencySort = sortBy === 'latency';
-  const data = await getModelCurrentList({
+  const { models, total, latencyScope } = await queryCatalog({
     search: q,
     provider,
     isFree: free,
-    sortBy: (latencySort ? 'name' : sortBy) as any,
-    limit: hasAttrFilter || latencySort ? 500 : limit,
-    offset: hasAttrFilter || latencySort ? 0 : offset,
+    sortBy: sortBy as any,
+    limit,
+    offset,
+    filters,
+    category,
+    ...(latencySort
+      ? {
+          fetchLatencyP95: async () =>
+            latestP95ByModel(await getRecentEndpointTelemetry({ limit: 500 })),
+        }
+      : {}),
   });
 
-  let models = applyCategoryFilter(applyAttributeFilters(data.models, filters), category);
-  let latencyScope: string | undefined;
-  if (latencySort) {
-    const telemetry = await getRecentEndpointTelemetry({ limit: 500 });
-    models = sortModelsByLatency(models, latestP95ByModel(telemetry));
-    latencyScope = ACTIVE_PROBE_SCOPE_NOTE;
-  }
-  const total = hasAttrFilter || (category && category !== 'all') || latencySort ? models.length : data.total;
-  const page = hasAttrFilter || latencySort ? models.slice(offset, offset + limit) : models;
-
-  const enriched = enrichModels(page);
+  const enriched = enrichModels(models);
 
   return apiJsonResponse(
     {

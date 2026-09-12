@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getModelCurrentList } from '@/lib/db/queries';
+import { queryCatalog, getRecentEndpointTelemetry } from '@/lib/db/queries';
 import { validatePublicApiRequest } from '@/lib/api-auth';
-import { applyAttributeFilters, enrichModels, hasAttributeFilters, applyCategoryFilter } from '@/lib/catalog-enrichment';
+import { enrichModels, latestP95ByModel } from '@/lib/catalog-enrichment';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,26 +31,34 @@ export async function GET(request: NextRequest) {
       hipaaEligible: want(searchParams.get('hipaa_eligible')),
       euResidency: want(searchParams.get('eu_residency')),
     };
-    const hasAttrFilter = hasAttributeFilters(filters);
     const category = searchParams.get('category') || 'all';
 
-    const data = await getModelCurrentList({
+    // Single shared query path with the v1 twin (queryCatalog) — no third copy.
+    const { models, total, latencyScope } = await queryCatalog({
       search,
       provider,
       isFree,
       sortBy,
       sortOrder,
-      limit: hasAttrFilter ? 500 : limit,
-      offset: hasAttrFilter ? 0 : offset,
+      limit,
+      offset,
+      filters,
+      category,
+      ...(sortBy === 'latency'
+        ? {
+            fetchLatencyP95: async () =>
+              latestP95ByModel(await getRecentEndpointTelemetry({ limit: 500 })),
+          }
+        : {}),
     });
-
-    const models = applyCategoryFilter(applyAttributeFilters(data.models, filters), category);
-    const total = hasAttrFilter || category !== 'all' ? models.length : data.total;
-    const page = hasAttrFilter ? models.slice(offset, offset + limit) : models;
 
     // P3 (ADR-4 freeze re-affirmed): the legacy surface is frozen — every
     // response carries machine-readable sunset headers pointing at v1.
-    const res = NextResponse.json({ models: enrichModels(page), total });
+    const res = NextResponse.json({
+      models: enrichModels(models),
+      total,
+      ...(latencyScope ? { latency_scope: latencyScope } : {}),
+    });
     res.headers.set('Deprecation', 'true');
     res.headers.set('Sunset', 'Wed, 01 Jul 2026 00:00:00 GMT');
     res.headers.set('Link', '</api/v1/models>; rel="successor-version"');
