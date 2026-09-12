@@ -16,9 +16,14 @@ export function uniqueEmail(prefix: string): string {
  * JSON backend MUST scope ids through ns() so ingestion tests in one file
  * can never pollute reader tests in another (the price-history
  * MODEL_REMOVED flake). Usage: `const MODEL_ID = ns('price-history')('model')`.
+ *
+ * Uniqueness is a monotonic sequence, NOT the clock: two calls in the same
+ * millisecond must still differ (a Date.now()-only scheme flaked 2/4 full
+ * runs in review — same-ms collision on its own uniqueness assertion).
  */
+let nsSeq = 0;
 export function ns(file: string): (id: string) => string {
-  const run = Date.now().toString(36);
+  const run = `${Date.now().toString(36)}.${(nsSeq++).toString(36)}`;
   return (id: string) => `test/${file}/${run}/${id}`;
 }
 
